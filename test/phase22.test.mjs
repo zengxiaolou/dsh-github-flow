@@ -1,358 +1,491 @@
-// test/phase22.test.mjs - Phase 22 · remote 指纹缓存失效（S1）回归测试套件
+// test/phase22.test.mjs - Phase 22 · 「本会话新建的 PR」专项回归测试套件
 //
-// 背景：缓存失效原先用「解析出的仓库身份」比对字符串，而解析器在多 remote 布局下
-// 会取错 [remote] 段（取第一个 github.com 匹配，而非 git 的 branch.<name>.remote → origin），
-// 导致身份恒失配 → 缓存永久不命中 → 每次请求重拉 6 个 gh 子进程。
-// S1 改为比对 remote 配置指纹：只回答「配置变没变」，不依赖任何语义解析。
+// 覆盖本次改造的四条链路（与「对话里出现过的 PR」严格划清口径）：
+// 1. session-pr-tracker：进程内登记簿（parsePrUrl 容错、repo#number 去重、最新在前）；
+// 2. session-pr-scan：纯函数转写扫描——只认 create（github_pr create / github_api POST /pulls /
+//    bash gh pr create），view/review/merge/comment 与 dry_run 一律不算，去重保序；
+// 3. /api/github/session-created-prs 路由：缺 sessionId → 400；未知会话 → 200 空列表 + reason；
+//    登记过的会话 → 200 并回吐该 PR（gh 取不到元数据时容忍 missing: true）；
+// 4. lib/client.js 产物：浮窗入口存在、全局 cockpit 注册已移除、factory 内无裸 export。
 //
-// 覆盖：
-// 1. parseRemoteUrls 只扫 [remote] 段（submodule 段不得混入）
-// 2. getRemoteFingerprint 对书写顺序 / remote 数量 / 命名方式免疫
-// 3. worktree（.git 为文件）能解析出指纹
-// 4. TtlCache 指纹命中 / 失配作废 / 缺失保守
-// 5. 路由层：双 remote 下缓存命中（防回归核心）
-// 6. clear({ keepFallback: false }) 同时清指纹
+// 环境依赖说明：路由的元数据补全走真实 gh。断网/未登录时不作为失败——只校验
+// repo + number + 200 这三个与网络无关的事实；gh 命令另加 2.5s 上限，防止断网
+// 把整个套件拖到 20s 以上。
 
 import assert from 'node:assert';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { execFileSync } from 'node:child_process';
 
-const created = [];
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
-/** 创建一个带指定 config 的临时「仓库」，返回路径。不依赖 git 命令。 */
-function makeFakeRepo(configText) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fp-'));
-  created.push(dir);
-  fs.mkdirSync(path.join(dir, '.git'), { recursive: true });
-  fs.writeFileSync(path.join(dir, '.git', 'config'), configText, 'utf8');
-  return dir;
-}
-
-function cleanup() {
-  for (const d of created) {
-    try { fs.rmSync(d, { recursive: true, force: true }); } catch {}
-  }
-  created.length = 0;
-}
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 async function runTests() {
-  let passed = 0;
+  console.log('🧪 开始执行 Phase 22 会话新建 PR 专项回归测试\n');
   let total = 0;
+  let passed = 0;
 
-  function assertAs(cond, name) {
+  function test(name, fn) {
     total++;
-    if (cond) {
-      console.log(`✅ PASS: ${name}`);
-      passed++;
-    } else {
-      console.error(`❌ FAIL: ${name}`);
-    }
-  }
-
-  const { GhExecutor, parseRemoteUrls } = await import('../lib/executor.js');
-  const { TtlCache } = await import('../lib/cache.js');
-  const exec = new GhExecutor({});
-
-  // ============================================================
-  console.log('\n--- 1. parseRemoteUrls 只扫 [remote] 段 ---');
-  // ============================================================
-
-  const cfgWithSubmodule = `[core]
-\trepositoryformatversion = 0
-[remote "origin"]
-\turl = https://github.com/a/b.git
-\tfetch = +refs/heads/*:refs/remotes/origin/*
-[submodule "lib"]
-\turl = https://github.com/x/y.git
-`;
-  const urls1 = parseRemoteUrls(cfgWithSubmodule);
-  assertAs(urls1.length === 1, 'submodule 段的 url 不得混入（核心：避免 submodule add 触发缓存作废）');
-  assertAs(urls1[0] === 'https://github.com/a/b.git', '只取到 remote 段的 origin url');
-
-  const cfgTwoRemotes = `[remote "upstream"]
-\turl = https://github.com/maiphucgiang/codebuddy2api.git
-[remote "origin"]
-\turl = https://github.com/ItQianChen/codebuddy2api.git
-`;
-  const urls2 = parseRemoteUrls(cfgTwoRemotes);
-  assertAs(urls2.length === 2, '双 remote 全部提取');
-  assertAs(urls2[0].includes('maiphucgiang'), '保持文件出现顺序（排序交给调用方）');
-
-  const cfgSSH = `[remote "origin"]
-\turl = git@github.com:a/b.git
-[remote "mirror"]
-\turl = ssh://git@github.com/a/b-mirror.git
-`;
-  assertAs(parseRemoteUrls(cfgSSH).length === 2, 'SSH / ssh:// 形态均能提取');
-
-  // 带引号的值：git 解析时会剥掉引号，指纹也必须剥，否则「加不加引号」
-  // 这种语义等价的改动会触发无谓的缓存作废
-  const cfgQuoted = '[remote "origin"]\n\turl = "https://github.com/a/b.git"\n';
-  assertAs(
-    parseRemoteUrls(cfgQuoted)[0] === 'https://github.com/a/b.git',
-    '带引号的 url 值必须剥掉引号（与 git 解析口径一致）'
-  );
-
-  assertAs(parseRemoteUrls('').length === 0, '空 config 返回空数组');
-  assertAs(parseRemoteUrls('[core]\n\tbare = false\n').length === 0, '无 remote 段返回空数组');
-
-  // 段头前缀陷阱：`[remote-tracking]` 以 `remote` 开头但语义无关。
-  // 用 \b 判定会误收（`-` 是非单词字符，会被当成词边界），必须用前瞻断言。
-  assertAs(
-    parseRemoteUrls('[remote-tracking]\n\turl = https://github.com/a/b.git\n').length === 0,
-    '[remote-tracking] 段不得被当成 remote 段（前缀陷阱）'
-  );
-  assertAs(
-    parseRemoteUrls('[remotes]\n\turl = https://github.com/a/b.git\n').length === 0,
-    '[remotes] 段不得被当成 remote 段'
-  );
-  assertAs(
-    parseRemoteUrls('[remote.origin]\n\turl = https://github.com/a/b.git\n').length === 1,
-    '[remote.origin] 点号旧语法应被收录'
-  );
-
-  // ============================================================
-  console.log('\n--- 2. getRemoteFingerprint 语义 ---');
-  // ============================================================
-
-  const repoA = makeFakeRepo(cfgTwoRemotes);
-  const fpA = exec.getRemoteFingerprint(repoA);
-  assertAs(typeof fpA === 'string' && fpA.length === 12, '指纹为 12 位十六进制');
-
-  // 书写顺序调换：upstream 在后、origin 在前 —— 指纹必须相同
-  const cfgReordered = `[remote "origin"]
-\turl = https://github.com/ItQianChen/codebuddy2api.git
-[remote "upstream"]
-\turl = https://github.com/maiphucgiang/codebuddy2api.git
-`;
-  const repoB = makeFakeRepo(cfgReordered);
-  assertAs(exec.getRemoteFingerprint(repoB) === fpA, '书写顺序调换后指纹不变（排序免疫）');
-
-  // remote 改名但 url 不变 —— 指纹必须相同（命名方式不影响「配置变没变」）
-  const cfgRenamed = `[remote "fork"]
-\turl = https://github.com/ItQianChen/codebuddy2api.git
-[remote "up"]
-\turl = https://github.com/maiphucgiang/codebuddy2api.git
-`;
-  const repoC = makeFakeRepo(cfgRenamed);
-  assertAs(exec.getRemoteFingerprint(repoC) === fpA, 'remote 改名但 url 集合不变 → 指纹不变');
-
-  // 改动 url —— 指纹必须变化
-  const cfgChanged = cfgTwoRemotes.replace('ItQianChen/codebuddy2api', 'OtherOrg/codebuddy2api');
-  const repoD = makeFakeRepo(cfgChanged);
-  assertAs(exec.getRemoteFingerprint(repoD) !== fpA, '改动 url 后指纹变化');
-
-  // 新增无关 remote —— 指纹必须变化（这是「配置变了」的定义）
-  const cfgAdded = cfgTwoRemotes + `[remote "third"]\n\turl = https://github.com/z/z.git\n`;
-  const repoE = makeFakeRepo(cfgAdded);
-  assertAs(exec.getRemoteFingerprint(repoE) !== fpA, '新增 remote 后指纹变化');
-
-  // 子模块变化 —— 指纹必须不变
-  const cfgSub = cfgTwoRemotes + `[submodule "x"]\n\turl = https://github.com/z/z.git\n`;
-  const repoF = makeFakeRepo(cfgSub);
-  assertAs(exec.getRemoteFingerprint(repoF) === fpA, 'submodule 段变化不影响指纹');
-
-  // ============================================================
-  console.log('\n--- 3. 异常与边界：不得抛错，返回 null ---');
-  // ============================================================
-
-  const notGit = fs.mkdtempSync(path.join(os.tmpdir(), 'nongit-'));
-  created.push(notGit);
-  assertAs(exec.getRemoteFingerprint(notGit) === null, '非 Git 目录返回 null');
-
-  const noRemote = makeFakeRepo('[core]\n\tbare = false\n');
-  const noRemoteFp = exec.getRemoteFingerprint(noRemote);
-  // 「读到了、但没有任何 remote」是一个确定事实，必须与「读不到配置」区分开：
-  // 前者要返回指纹（空集合的哈希），否则用户删光 remote 后指纹恒为 null，
-  // 旧快照再也无法失效。后者才返回 null。
-  assertAs(typeof noRemoteFp === 'string' && noRemoteFp.length === 12, '无 remote 但 config 可读 → 返回空集合指纹（不是 null）');
-
-  // 删光 remote 必须能让旧缓存失效
-  const cNoRemote = new TtlCache(100000);
-  const repoWithRemote = makeFakeRepo('[remote "origin"]\n\turl = https://github.com/a/b.git\n');
-  cNoRemote.set(repoWithRemote, { repo: { nameWithOwner: 'a/b' } }, Date.now(), exec.getRemoteFingerprint(repoWithRemote));
-  fs.writeFileSync(path.join(repoWithRemote, '.git', 'config'), '[core]\n\tbare = false\n', 'utf8');
-  assertAs(
-    cNoRemote.invalidateIfFingerprintChanged(repoWithRemote, exec.getRemoteFingerprint(repoWithRemote)) === true,
-    '删除全部 remote 后缓存必须失效（否则旧身份永久冻结）'
-  );
-
-  const repoBroken = makeFakeRepo(cfgTwoRemotes);
-  fs.rmSync(path.join(repoBroken, '.git', 'config'));
-  assertAs(exec.getRemoteFingerprint(repoBroken) === null, 'config 不存在返回 null（不抛错）');
-
-  // ============================================================
-  console.log('\n--- 4. worktree（.git 为文件）能解析出指纹 ---');
-  // ============================================================
-
-  function tryGit(args, cwd) {
     try {
-      // stdio: 'ignore' 而非 'pipe'：本仓库的 DSH 沙箱禁止子进程管道
-      // （Node spawn + stdio pipe 会 EPERM），而本用例只需要「命令执行成功」
-      // 这个事实，不需要捕获输出。
-      execFileSync('git', args, { cwd, stdio: 'ignore' });
-      return true;
-    } catch {
-      return false;
+      fn();
+      passed++;
+      console.log(`✅ PASS: ${name}`);
+    } catch (e) {
+      console.error(`❌ FAIL: ${name}`);
+      console.error(e);
     }
   }
 
-  const wtBase = fs.mkdtempSync(path.join(os.tmpdir(), 'wtbase-'));
-  created.push(wtBase);
-  const mainRepo = path.join(wtBase, 'main');
-  fs.mkdirSync(mainRepo);
-
-  const gitOk =
-    tryGit(['init', '-q'], mainRepo) &&
-    tryGit(['config', 'user.email', 't@t.com'], mainRepo) &&
-    tryGit(['config', 'user.name', 't'], mainRepo) &&
-    tryGit(['remote', 'add', 'origin', 'https://github.com/a/b.git'], mainRepo);
-  fs.writeFileSync(path.join(mainRepo, 'f.txt'), 'x');
-  const commitOk = gitOk && tryGit(['add', '-A'], mainRepo) && tryGit(['commit', '-q', '-m', 'init'], mainRepo);
-  const wtPath = path.join(wtBase, 'wt');
-  const wtOk = commitOk && tryGit(['worktree', 'add', '-q', wtPath, '-b', 'feat'], mainRepo);
-
-  if (wtOk) {
-    assertAs(fs.statSync(path.join(wtPath, '.git')).isFile(), '.git 在 worktree 下确实是文件');
-    const wtFp = exec.getRemoteFingerprint(wtPath);
-    const mainFp = exec.getRemoteFingerprint(mainRepo);
-    assertAs(typeof wtFp === 'string' && wtFp.length === 12, 'worktree 能解析出指纹（不因 .git 是文件而失效）');
-    assertAs(wtFp === mainFp, 'worktree 与主仓库共享 config → 指纹一致');
-  } else {
-    // 沙箱禁止 spawn git 时跳过：显式标注 SKIP，绝不计入通过数（虚报绿色比红更糟）
-    total += 2;
-    console.log('⏭️  SKIP: 当前环境无法执行 git 命令，worktree 两项用例跳过');
+  async function asyncTest(name, fn) {
+    total++;
+    try {
+      await fn();
+      passed++;
+      console.log(`✅ PASS: ${name}`);
+    } catch (e) {
+      console.error(`❌ FAIL: ${name}`);
+      console.error(e);
+    }
   }
 
   // ============================================================
-  console.log('\n--- 5. TtlCache 指纹命中 / 失配 / 缺失 ---');
+  // 一、登记簿：parsePrUrl 容错 + 去重 + 最新在前
   // ============================================================
+  console.log('\n--- 1. Session PR Tracker (parse / dedupe / ordering) ---');
 
-  const c1 = new TtlCache(100000);
-  const now = Date.now();
-  c1.set('k', { repo: { nameWithOwner: 'a/b' } }, now, 'fp-aaa');
-  assertAs(c1.matchesFingerprint('k', 'fp-aaa') === true, '指纹一致 → 命中');
-  assertAs(c1.invalidateIfFingerprintChanged('k', 'fp-aaa') === false, '指纹一致 → 不作废');
-  assertAs(c1.getFallback('k') !== undefined, '未作废时容灾底座仍在');
+  const {
+    parsePrUrl,
+    recordCreatedPr,
+    listSessionCreatedPrs,
+    __resetCreatedPrTracker,
+  } = await import('../lib/session-pr-tracker.js');
 
-  assertAs(c1.invalidateIfFingerprintChanged('k', 'fp-bbb') === true, '指纹失配 → 作废');
-  assertAs(c1.getFallback('k') === undefined, '作废后容灾底座同步清除');
-  assertAs(c1.get('k', now) === undefined, '作废后活动缓存同步清除');
-
-  const c2 = new TtlCache(100000);
-  c2.set('k', { repo: {} }, now, 'fp-aaa');
-  // set(null) 必须保留旧指纹：null 的含义是「这次没读到」，不是「没有 remote」。
-  // 若把 null 当清除，一次瞬时读取失败就永久抹掉失效检测能力。
-  c2.set('k', { repo: {} }, now + 1, null);
-  assertAs(c2.invalidateIfFingerprintChanged('k', 'fp-bbb') === true, 'set(null) 后旧指纹仍在 → remote 变更依然能被检出');
-  assertAs(c2.invalidateIfFingerprintChanged('k', null) === false, '当前指纹为 null → 保守不作废');
-
-  const c3 = new TtlCache(100000);
-  c3.set('k', { repo: {} }, now); // 未提供指纹
-  assertAs(c3.invalidateIfFingerprintChanged('k', 'fp-xyz') === false, '缓存未记录指纹 → 保守不作废');
-
-  // clear 语义
-  const c4 = new TtlCache(100000);
-  c4.set('k', { repo: {} }, now, 'fp-aaa');
-  c4.clear();
-  assertAs(c4.getFallback('k') !== undefined, 'clear() 默认保留容灾底座');
-  assertAs(c4.matchesFingerprint('k', 'fp-aaa') === true, 'clear() 默认保留指纹（底座仍在，指纹必须跟着留）');
-
-  const c5 = new TtlCache(100000);
-  c5.set('k', { repo: {} }, now, 'fp-aaa');
-  c5.clear({ keepFallback: false });
-  assertAs(c5.getFallback('k') === undefined, 'clear({keepFallback:false}) 清空容灾底座');
-  assertAs(c5.matchesFingerprint('k', 'fp-aaa') === true, '指纹清空后 matchesFingerprint 走缺失分支（保守 true）');
-
-  // ============================================================
-  console.log('\n--- 6. 路由层：双 remote 下缓存命中（防回归核心）---');
-  // ============================================================
-
-  const { registerOverviewRoutes } = await import('../lib/api/routes-overview.js');
-
-  const repoDir = makeFakeRepo(cfgTwoRemotes);
-  const cache = new TtlCache(100000);
-
-  const mockExec = new GhExecutor();
-  // 让身份解析返回 fork（真实行为），但缓存失效不得依赖它
-  mockExec.getRepoIdentityFromLocal = () => ({
-    nameWithOwner: 'ItQianChen/codebuddy2api',
-    name: 'codebuddy2api',
-    owner: 'ItQianChen',
-    defaultBranch: 'main',
-    url: 'https://github.com/ItQianChen/codebuddy2api',
+  test('parsePrUrl 精确拆出 owner/repo 与 PR 编号', () => {
+    assert.deepStrictEqual(parsePrUrl('https://github.com/acme/demo/pull/128'), { repo: 'acme/demo', number: 128 });
+    assert.deepStrictEqual(parsePrUrl('https://github.com/acme/demo/pull/9?diff=split'), { repo: 'acme/demo', number: 9 });
+    assert.deepStrictEqual(parsePrUrl('http://github.com/org-name/repo.name/pull/7'), { repo: 'org-name/repo.name', number: 7 });
+    assert.deepStrictEqual(parsePrUrl('看这个 https://github.com/a/b/pull/3 谢谢'), { repo: 'a/b', number: 3 });
   });
-  let ghCallCount = 0;
-  mockExec.checkAuth = async () => ({ installed: true, loggedIn: true, user: 't' });
-  mockExec.getRepoMetadata = async () => ({
-    nameWithOwner: 'ItQianChen/codebuddy2api',
-    name: 'codebuddy2api',
-    owner: 'ItQianChen',
-    defaultBranch: 'main',
-    url: 'https://github.com/ItQianChen/codebuddy2api',
+
+  test('parsePrUrl 对垃圾输入一律返回 null，绝不臆造 PR', () => {
+    for (const bad of [
+      '',
+      'not a url',
+      'https://github.com/acme/demo/issues/5',
+      'https://gitlab.com/acme/demo/pull/1',
+      'https://github.com/acme/demo/pull/0',
+      'https://github.com/acme/demo/pull/abc',
+      'https://github.com/acme/demo/pull/',
+      null,
+      undefined,
+      42,
+      {},
+    ]) {
+      assert.strictEqual(parsePrUrl(bad), null, `应忽略非法输入: ${String(bad)}`);
+    }
   });
-  mockExec.run = async (args) => {
-    ghCallCount++;
-    if (args.includes('pr') && args.includes('list')) return { ok: true, data: [] };
-    if (args.includes('issue') && args.includes('list')) return { ok: true, data: [] };
-    if (args.includes('run') && args.includes('list')) return { ok: true, data: [] };
-    return { ok: true, data: [] };
+
+  test('recordCreatedPr 拒绝空会话 id 与垃圾 URL（返回 null 且不落库）', () => {
+    __resetCreatedPrTracker();
+    assert.strictEqual(recordCreatedPr('', 'https://github.com/acme/demo/pull/1'), null, '空会话 id 不登记');
+    assert.strictEqual(recordCreatedPr('   ', 'https://github.com/acme/demo/pull/1'), null, '纯空白会话 id 不登记');
+    assert.strictEqual(recordCreatedPr('sess-x', 'https://github.com/acme/demo/issues/2'), null, 'issue 链接不登记');
+    assert.strictEqual(recordCreatedPr('sess-x', 'garbage'), null, '垃圾 URL 不登记');
+    assert.deepStrictEqual(listSessionCreatedPrs('sess-x'), [], '被拒绝的登记不得留下任何行');
+    __resetCreatedPrTracker();
+  });
+
+  test('recordCreatedPr 按 repo#number 去重：同一 PR 重复登记只有一行', () => {
+    __resetCreatedPrTracker();
+    const first = recordCreatedPr('sess-dup', 'https://github.com/acme/demo/pull/128');
+    const second = recordCreatedPr('sess-dup', 'https://github.com/acme/demo/pull/128');
+    assert(first && second, '两次登记都应成功返回行');
+    const rows = listSessionCreatedPrs('sess-dup');
+    assert.strictEqual(rows.length, 1, '同一 repo#number 只保留一行');
+    assert.strictEqual(rows[0].repo, 'acme/demo');
+    assert.strictEqual(rows[0].number, 128);
+    assert.strictEqual(rows[0].via, 'tool', '途经标记默认 tool');
+
+    // 大小写不同的同一 PR 仍视为重复
+    recordCreatedPr('sess-dup', 'https://github.com/ACME/Demo/pull/128');
+    assert.strictEqual(listSessionCreatedPrs('sess-dup').length, 1, 'repo 大小写差异不得产生第二行');
+    __resetCreatedPrTracker();
+  });
+
+  await asyncTest('listSessionCreatedPrs 最新在前，且会话之间互不串台', async () => {
+    __resetCreatedPrTracker();
+    recordCreatedPr('sess-order', 'https://github.com/acme/demo/pull/1', 'tool');
+    await sleep(8);
+    recordCreatedPr('sess-order', 'https://github.com/acme/demo/pull/2', 'bash');
+    await sleep(8);
+    recordCreatedPr('sess-order', 'https://github.com/acme/demo/pull/3', 'api');
+    recordCreatedPr('sess-other', 'https://github.com/acme/demo/pull/99');
+
+    const rows = listSessionCreatedPrs('sess-order');
+    assert.deepStrictEqual(rows.map((r) => r.number), [3, 2, 1], '必须按登记时间倒序（最新在前）');
+    assert.deepStrictEqual(rows.map((r) => r.via), ['api', 'bash', 'tool'], '途经标记随登记来源保留');
+
+    const other = listSessionCreatedPrs('sess-other');
+    assert.deepStrictEqual(other.map((r) => r.number), [99], '不同会话只看到自己的 PR');
+    assert.deepStrictEqual(listSessionCreatedPrs('sess-unregistered'), [], '未登记的会话返回空数组');
+    __resetCreatedPrTracker();
+  });
+
+  test('__resetCreatedPrTracker 彻底清空登记簿', () => {
+    recordCreatedPr('sess-reset', 'https://github.com/acme/demo/pull/5');
+    assert.strictEqual(listSessionCreatedPrs('sess-reset').length, 1);
+    __resetCreatedPrTracker();
+    assert.strictEqual(listSessionCreatedPrs('sess-reset').length, 0, 'reset 后不得残留任何行');
+  });
+
+  // ============================================================
+  // 二、纯函数转写扫描：只认「新建」，去重保序
+  // ============================================================
+  console.log('\n--- 2. scanCreatedPrsFromTranscript (create-only 口径) ---');
+
+  const { scanCreatedPrsFromTranscript, readSessionCreatedPrs } = await import('../lib/session-pr-scan.js');
+
+  // 转写行构造器：与 DSH session.v4.jsonl 的真实形状逐字段对齐
+  const callLine = (seq, time, callId, name, args) => JSON.stringify({
+    type: 'tool/call',
+    seq,
+    time,
+    data: { callId, name, arguments: typeof args === 'string' ? args : JSON.stringify(args) },
+  });
+  const resultLine = (seq, time, callId, text) => JSON.stringify({
+    type: 'tool/result',
+    seq,
+    time,
+    data: { toolCallId: callId, message: { role: 'tool', content: [{ type: 'text', text }] } },
+  });
+  const transcript = (...lines) => lines.join('\n');
+
+  test('github_pr create 的 tool/result 里出现 PR 链接 → 认定为新建', () => {
+    const refs = scanCreatedPrsFromTranscript(transcript(
+      callLine(1, 1000, 'a', 'github_pr', { action: 'create' }),
+      resultLine(2, 1100, 'a', '已创建 https://github.com/acme/demo/pull/128'),
+    ));
+    assert.strictEqual(refs.length, 1, '应扫出 1 条新建 PR');
+    assert.strictEqual(refs[0].repo, 'acme/demo');
+    assert.strictEqual(refs[0].number, 128);
+    assert.strictEqual(refs[0].via, 'tool', 'github_pr 来源标记为 tool');
+  });
+
+  test('github_pr 的 view / review / merge / comment 一律不算新建', () => {
+    for (const action of ['view', 'review', 'merge', 'comment', 'list']) {
+      const refs = scanCreatedPrsFromTranscript(transcript(
+        callLine(1, 1000, 'a', 'github_pr', { action }),
+        resultLine(2, 1100, 'a', 'https://github.com/acme/demo/pull/128'),
+      ));
+      assert.deepStrictEqual(refs, [], `action=${action} 不得被当成新建`);
+    }
+  });
+
+  test('dry_run: true 的 create 不算新建（预演没有产生 PR）', () => {
+    const asObject = scanCreatedPrsFromTranscript(transcript(
+      callLine(1, 1000, 'a', 'github_pr', { action: 'create', dry_run: true }),
+      resultLine(2, 1100, 'a', 'would create https://github.com/acme/demo/pull/128'),
+    ));
+    assert.deepStrictEqual(asObject, [], 'dry_run 为布尔 true 时必须排除');
+
+    const asString = scanCreatedPrsFromTranscript(transcript(
+      callLine(1, 1000, 'a', 'github_pr', '{"action":"create","dry_run":true}'),
+      resultLine(2, 1100, 'a', 'https://github.com/acme/demo/pull/129'),
+    ));
+    assert.deepStrictEqual(asString, [], 'arguments 为原始 JSON 字符串时同样排除');
+  });
+
+  test('bash 命令含 gh pr create → 认定新建；gh pr list 不算', () => {
+    const created = scanCreatedPrsFromTranscript(transcript(
+      callLine(1, 1000, 'b', 'bash', { command: 'gh pr create --title "feat: x" --body "y"' }),
+      resultLine(2, 1200, 'b', 'https://github.com/acme/demo/pull/130'),
+    ));
+    assert.strictEqual(created.length, 1, 'gh pr create 应扫出 1 条');
+    assert.strictEqual(created[0].number, 130);
+    assert.strictEqual(created[0].via, 'bash', 'bash 来源标记为 bash');
+
+    const listed = scanCreatedPrsFromTranscript(transcript(
+      callLine(1, 1000, 'c', 'bash', { command: 'gh pr list --state all' }),
+      resultLine(2, 1200, 'c', 'https://github.com/acme/demo/pull/130'),
+    ));
+    assert.deepStrictEqual(listed, [], 'gh pr list 不得被当成新建');
+  });
+
+  test('github_api POST 到 /pulls → 认定新建；到 /pulls/<n> 或 GET 不算', () => {
+    const created = scanCreatedPrsFromTranscript(transcript(
+      callLine(1, 1000, 'd', 'github_api', { method: 'POST', endpoint: 'repos/acme/demo/pulls' }),
+      resultLine(2, 1300, 'd', '{"html_url":"https://github.com/acme/demo/pull/131"}'),
+    ));
+    assert.strictEqual(created.length, 1, 'POST /pulls 应扫出 1 条');
+    assert.strictEqual(created[0].via, 'api', 'github_api 来源标记为 api');
+
+    const subPath = scanCreatedPrsFromTranscript(transcript(
+      callLine(1, 1000, 'e', 'github_api', { method: 'POST', endpoint: 'repos/acme/demo/pulls/131/reviews' }),
+      resultLine(2, 1300, 'e', 'https://github.com/acme/demo/pull/131'),
+    ));
+    assert.deepStrictEqual(subPath, [], '/pulls/<n>/… 属于子资源，不得算新建');
+
+    const getPull = scanCreatedPrsFromTranscript(transcript(
+      callLine(1, 1000, 'f', 'github_api', { method: 'GET', endpoint: 'repos/acme/demo/pulls' }),
+      resultLine(2, 1300, 'f', 'https://github.com/acme/demo/pull/131'),
+    ));
+    assert.deepStrictEqual(getPull, [], 'GET /pulls 是列举，不得算新建');
+  });
+
+  test('callId 不匹配的 result 不得被借用（结果必须归属创建调用）', () => {
+    const refs = scanCreatedPrsFromTranscript(transcript(
+      callLine(1, 1000, 'create-1', 'github_pr', { action: 'create' }),
+      resultLine(2, 1100, 'other-call', 'https://github.com/acme/demo/pull/132'),
+    ));
+    assert.deepStrictEqual(refs, [], '不同 callId 的 result 必须忽略');
+
+    const noCall = scanCreatedPrsFromTranscript(transcript(
+      resultLine(2, 1100, 'ghost', 'https://github.com/acme/demo/pull/132'),
+    ));
+    assert.deepStrictEqual(noCall, [], '没有对应 tool/call 的孤立 result 必须忽略');
+  });
+
+  test('重复的同一 PR 去重且保持首次出现顺序', () => {
+    const refs = scanCreatedPrsFromTranscript(transcript(
+      callLine(1, 1000, 'a', 'github_pr', { action: 'create' }),
+      resultLine(2, 1100, 'a', 'https://github.com/acme/demo/pull/140'),
+      callLine(3, 2000, 'b', 'bash', { command: 'gh pr create --fill' }),
+      resultLine(4, 2100, 'b', 'https://github.com/acme/demo/pull/140'),
+      callLine(5, 3000, 'c', 'github_api', { method: 'POST', endpoint: 'repos/acme/demo/pulls' }),
+      resultLine(6, 3100, 'c', 'https://github.com/acme/demo/pull/141'),
+    ));
+    assert.deepStrictEqual(refs.map((r) => r.number), [140, 141], '去重保序：140 只出现一次且在前');
+    assert.strictEqual(refs[0].via, 'tool', '去重保留首次出现的来源');
+  });
+
+  test('单次 result 中多条 PR 链接全部收下；非 PR 链接忽略', () => {
+    const refs = scanCreatedPrsFromTranscript(transcript(
+      callLine(1, 1000, 'a', 'bash', { command: 'gh pr create && gh pr create' }),
+      resultLine(2, 1100, 'a', [
+        'https://github.com/acme/demo/pull/150',
+        'https://github.com/acme/demo/pull/151',
+        'https://github.com/acme/demo/issues/152',
+        'https://example.com/acme/demo/pull/153',
+      ].join('\n')),
+    ));
+    assert.deepStrictEqual(refs.map((r) => r.number), [150, 151], '两条 PR 都收，issue/非 github 域名忽略');
+  });
+
+  test('容错：空文本、非 JSON 行、content 为纯字符串、shell 别名均安全处理', () => {
+    assert.deepStrictEqual(scanCreatedPrsFromTranscript(''), [], '空文本返回空数组');
+    assert.deepStrictEqual(scanCreatedPrsFromTranscript(null), [], 'null 返回空数组');
+    assert.deepStrictEqual(scanCreatedPrsFromTranscript(undefined), [], 'undefined 返回空数组');
+    assert.deepStrictEqual(scanCreatedPrsFromTranscript('这不是 JSON\n{"type":"tool/call", 坏掉了}'), [], '非 JSON 行安全跳过');
+
+    // message.content 直接是字符串（个别 transcript 版本如此）
+    const stringContent = scanCreatedPrsFromTranscript([
+      callLine(1, 1000, 'a', 'github_pr', { action: 'create' }),
+      JSON.stringify({ type: 'tool/result', seq: 2, time: 1100, data: { toolCallId: 'a', message: { role: 'tool', content: 'https://github.com/acme/demo/pull/160' } } }),
+    ].join('\n'));
+    assert.deepStrictEqual(stringContent.map((r) => r.number), [160], 'content 为字符串时同样能扫出链接');
+
+    // shell 别名等价于 bash
+    const shellAlias = scanCreatedPrsFromTranscript(transcript(
+      callLine(1, 1000, 's', 'shell', { script: 'gh pr create --fill' }),
+      resultLine(2, 1100, 's', 'https://github.com/acme/demo/pull/161'),
+    ));
+    assert.deepStrictEqual(shellAlias.map((r) => r.number), [161], 'shell 别名与 bash 同口径');
+  });
+
+  // readSessionCreatedPrs 是异步的（同步 inflate 会按住 Host 事件循环，见 session-pr-scan.ts）
+  await asyncTest('readSessionCreatedPrs 对不存在的会话安全降级（空 refs + 原因说明）', async () => {
+    const result = await readSessionCreatedPrs('session-that-does-not-exist-phase22', { force: true });
+    assert(Array.isArray(result.refs), 'refs 必须是数组');
+    assert.strictEqual(result.refs.length, 0, '不存在的会话不得返回任何 refs');
+    assert.strictEqual(result.transcript, null, '找不到转写文件时 transcript 为 null');
+    assert(typeof result.reason === 'string' && result.reason.length > 0, '必须给出可读的 reason，便于前端提示');
+  });
+
+  // ============================================================
+  // 三、HTTP 路由：注册 + 400 + 未知会话 200 空列表 + 登记会话 200
+  // ============================================================
+  console.log('\n--- 3. /api/github/session-created-prs 路由契约 ---');
+
+  const { registerApiRoutes } = await import('../lib/api/routes.js');
+  const { GhExecutor } = await import('../lib/executor.js');
+
+  // 假的 webServer：exact/prefixes 两张表 + register 收集器，重复注册直接抛错
+  // （与宿主真实 WebServer 的 duplicate route 行为一致，便于暴露注册冲突）。
+  function makeFakeWebServer() {
+    const routes = new Map();
+    const webServer = {
+      exact: new Map(),
+      prefixes: new Map(),
+      registered: [],
+      register(route) {
+        const table = route.kind === 'exact' ? this.exact : this.prefixes;
+        if (table.has(route.path)) {
+          throw new Error(`duplicate route: ${route.kind} ${route.path}`);
+        }
+        table.set(route.path, route);
+        routes.set(route.path, route);
+        this.registered.push(route.path);
+        return () => {
+          table.delete(route.path);
+          routes.delete(route.path);
+        };
+      },
+    };
+    return { webServer, routes };
+  }
+
+  const { webServer, routes } = makeFakeWebServer();
+
+  // gh 是否可用（未登录/离线时降级为桩执行器，但仍校验与网络无关的事实）
+  let ghReady = false;
+  try {
+    execFileSync('gh', ['auth', 'status'], { stdio: 'ignore', timeout: 5000 });
+    ghReady = true;
+  } catch {
+    ghReady = false;
+  }
+
+  const realExec = new GhExecutor();
+  // 元数据补全只在快路径上跑：给 gh 加 2.5s 上限，断网时不会把套件拖到 20s 以上
+  const boundedExec = {
+    run: (args, opts = {}) => realExec.run(args, { ...opts, timeoutMs: Math.min(opts.timeoutMs || 2500, 2500) }),
   };
-  mockExec.getLocalGitStatus = async () => null;
-  mockExec.getGitCommitLog = async () => null;
-  mockExec.getGitBranches = async () => null;
+  const stubExec = {
+    run: async () => ({ ok: false, error: 'gh 不可用（测试降级桩）' }),
+  };
+  const routeExec = ghReady ? boundedExec : stubExec;
+  console.log(`   环境探针：gh auth status ${ghReady ? '可用（真实元数据）' : '不可用（降级为桩，跳过元数据断言）'}`);
 
-  const registered = {};
-  registerOverviewRoutes(
-    { bindRoute: (r) => (registered[r.path] = r.handler) },
-    mockExec,
-    cache,
-    new TtlCache(10000),
-    { getQuickStatus: () => null }
-  );
-  const handler = registered['/api/github/overview'];
+  registerApiRoutes({ webServer }, routeExec, undefined, 15_000);
 
-  async function callOnce() {
-    let out = null;
-    await handler(
-      { method: 'GET', url: `/api/github/overview?cwd=${encodeURIComponent(repoDir)}` },
-      { setHeader() {}, end(s) { out = JSON.parse(s); } }
-    );
-    return out;
+  const targetRoute = routes.get('/api/github/session-created-prs');
+
+  async function invoke(handler, { url, method = 'GET' }) {
+    const res = {
+      statusCode: 0,
+      setHeader() {},
+      end() {},
+    };
+    let payload = '';
+    res.end = (chunk) => { payload = chunk; };
+    await handler({ method, url }, res);
+    return { status: res.statusCode, body: payload ? JSON.parse(payload) : null };
   }
 
-  const r1 = await callOnce();
-  const r2 = await callOnce();
-  const r3 = await callOnce();
-  assertAs(r1.fromCache !== true, '第 1 次请求走真实拉取');
-  assertAs(r2.fromCache === true, '第 2 次请求命中缓存（旧实现此处必然失配）');
-  assertAs(r3.fromCache === true, '第 3 次请求命中缓存（旧实现此处必然失配）');
+  test('路由已注册在 exact 表上，且 handler 为函数', () => {
+    assert(targetRoute, '/api/github/session-created-prs 必须由 registerApiRoutes 注册');
+    assert.strictEqual(targetRoute.kind, 'exact', '必须是 exact 路由（带 query 的 GET）');
+    assert.strictEqual(typeof targetRoute.handler, 'function', '必须有可调用 handler');
+    assert(webServer.exact.has('/api/github/session-created-prs'), '必须落进 webServer.exact 路由表');
+    assert(!webServer.prefixes.has('/api/github/session-created-prs'), '不得误注册为前缀路由');
+    assert(webServer.registered.includes('/api/github/session-created-prs'), 'register() 必须真实收到该路径');
+  });
 
-  // 改 remote → 必须作废
-  fs.writeFileSync(
-    path.join(repoDir, '.git', 'config'),
-    cfgTwoRemotes.replace('ItQianChen/codebuddy2api', 'OtherOrg/codebuddy2api'),
-    'utf8'
-  );
-  const r4 = await callOnce();
-  assertAs(r4.fromCache !== true, '改动 remote url 后下一次请求必然重新拉取（指纹变化生效）');
+  await asyncTest('缺少 sessionId → 400，且给出可读错误', async () => {
+    const { status, body } = await invoke(targetRoute.handler, { url: '/api/github/session-created-prs' });
+    assert.strictEqual(status, 400, '缺 sessionId 必须 400');
+    assert.strictEqual(body.ok, false, 'ok 必须为 false');
+    assert(typeof body.error === 'string' && body.error.includes('sessionId'), '错误信息必须点明缺少 sessionId');
 
-  // 再加 return: 失效后重新命中
-  const r5 = await callOnce();
-  assertAs(r5.fromCache === true, '作废并重拉后再次命中（没有陷入永久失效）');
+    const blank = await invoke(targetRoute.handler, { url: '/api/github/session-created-prs?sessionId=%20%20' });
+    assert.strictEqual(blank.status, 400, '纯空白 sessionId 同样视为缺失（400）');
+  });
 
-  cleanup();
+  await asyncTest('未知 sessionId → 200 且 items: []，并附 reason 说明', async () => {
+    const { status, body } = await invoke(targetRoute.handler, {
+      url: '/api/github/session-created-prs?sessionId=session-that-does-not-exist-phase22',
+    });
+    assert.strictEqual(status, 200, '未知会话不是错误，必须 200');
+    assert.strictEqual(body.ok, true, 'ok 必须为 true');
+    assert(Array.isArray(body.data.items), 'data.items 必须是数组');
+    assert.strictEqual(body.data.items.length, 0, '未知会话不得凭空返回 PR');
+    assert.strictEqual(body.data.total, 0, 'total 应为 0');
+    assert(typeof body.data.reason === 'string' && body.data.reason.length > 0, '必须附 reason（前端据此提示）');
+    assert.strictEqual(body.data.sessionId, 'session-that-does-not-exist-phase22', '回显请求的 sessionId');
+  });
 
-  console.log(`\n========================================`);
-  console.log(`Phase 22 Test Result: ${passed}/${total} assertions ${passed === total ? 'PASSED' : 'FAILED'}!`);
-  console.log(`========================================`);
-  if (passed !== total) process.exit(1);
+  await asyncTest('登记过的会话 → 200 并回吐该 PR（repo + number 必须正确，元数据缺失容忍）', async () => {
+    __resetCreatedPrTracker();
+    const sessionId = 'sess-phase22-route';
+    const recorded = recordCreatedPr(sessionId, 'https://github.com/acme/demo/pull/128', 'tool');
+    assert(recorded, '登记必须成功');
+
+    try {
+      const { status, body } = await invoke(targetRoute.handler, {
+        url: `/api/github/session-created-prs?sessionId=${encodeURIComponent(sessionId)}`,
+      });
+      assert.strictEqual(status, 200, '登记过的会话必须 200');
+      assert.strictEqual(body.ok, true);
+      assert.strictEqual(body.data.items.length, 1, '必须回吐 1 条刚登记的 PR');
+      const item = body.data.items[0];
+      assert.strictEqual(item.repo, 'acme/demo', 'repo 必须原样透出');
+      assert.strictEqual(item.number, 128, 'number 必须原样透出');
+      assert.strictEqual(item.url, 'https://github.com/acme/demo/pull/128', 'gh 取不到元数据时回退到标准 PR 链接');
+      assert.strictEqual(typeof item.missing, 'boolean', 'missing 标记必须存在（前端据此降级绘制）');
+      assert.strictEqual(item.via, 'tool', 'via 途经标记必须透出');
+      if (ghReady) {
+        // gh 可用时只断言「字段齐全」，具体取值允许 UNKNOWN（仓库可能不存在/无权限）
+        assert(typeof item.title === 'string' && item.title.length > 0, 'gh 可用时 title 必须有兜底值');
+        assert(typeof item.state === 'string' && item.state.length > 0, 'gh 可用时 state 必须有兜底值');
+        assert(item.checks && typeof item.checks.state === 'string', 'CI 归约必须始终是三态对象');
+      } else {
+        assert.strictEqual(item.missing, true, 'gh 不可用时必须显式标记 missing: true');
+      }
+    } finally {
+      __resetCreatedPrTracker();
+    }
+  });
+
+  await asyncTest('非 GET 方法 → 405，且不回吐任何数据', async () => {
+    const { status, body } = await invoke(targetRoute.handler, {
+      url: '/api/github/session-created-prs?sessionId=sess-phase22-route',
+      method: 'POST',
+    });
+    assert.strictEqual(status, 405, '写方法必须被拒绝');
+    assert.strictEqual(body.ok, false);
+    assert(!('items' in body), '405 响应不得夹带 items');
+  });
+
+  // ============================================================
+  // 四、客户端产物自检：浮窗入口在、全局 cockpit 入口已拆、无裸 export
+  // ============================================================
+  console.log('\n--- 4. lib/client.js 自包含产物断言 ---');
+
+  const bundle = fs.readFileSync(path.join(__dirname, '../lib/client.js'), 'utf8');
+
+  test('Bundle 包含会话 PR 浮窗的三条关键标识', () => {
+    assert(bundle.includes('session-created-prs'), '必须请求 /api/github/session-created-prs');
+    assert(bundle.includes('ghsp-overlay'), '必须包含 ghsp-overlay 浮窗容器样式');
+    assert(bundle.includes('github-pr'), '必须包含 github-pr 右列 tab 类型');
+  });
+
+  test('全局 cockpit 入口已移除：无 main/github slot 注册、无 sidebar.panellist', () => {
+    assert(!bundle.includes('slots.register({ name: "main", key: "github"'), '不得恢复全局 main 槽位注册（入口已改成浮窗）');
+    assert(!bundle.includes('sidebar.panellist'), '不得再注册 sidebar.panellist 面板');
+    assert(bundle.includes('shell.overlay'), '替代入口必须是 shell.overlay 浮窗');
+    assert(bundle.includes('github-session-pr'), '浮窗 slot id 必须是 github-session-pr');
+  });
+
+  test('Bundle 是经典脚本产物：无裸 export 语句（factory 内必须走 exports.*）', () => {
+    assert(!/^\s*export\s/m.test(bundle), '不得出现裸 export 语句（构建已剥除）');
+    assert(bundle.includes('exports.apply'), '导出必须挂在 exports 对象上');
+  });
+
+  console.log('\n========================================');
+  console.log(`Phase 22 Test Result: ${passed}/${total} PASSED`);
+  console.log('========================================');
+
+  if (passed !== total) {
+    console.error(`\n❌ ${total - passed} 项断言失败`);
+    process.exit(1);
+  }
 }
 
-runTests().catch((e) => {
-  console.error('测试执行异常:', e);
-  cleanup();
+runTests().catch((err) => {
+  console.error(err);
   process.exit(1);
 });

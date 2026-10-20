@@ -6,7 +6,7 @@ declare global {
   }
 }
 
-import { formatRelativeTime, rollupCiStatus, reviewDecisionBadge, eventLabel, fetchWithRetry, parseGitStatText } from './ui/utils.js';
+import { formatRelativeTime, rollupCiStatus, reviewDecisionBadge, eventLabel, fetchWithRetry, parseGitStatText, runConclusionBadge } from './ui/utils.js';
 import { GITHUB_PANEL_CSS, injectStyles } from './ui/styles.js';
 import { renderOctocat, renderGitIcon, renderOctocatBadge, renderPluginBadge } from './ui/icons.js';
 import {
@@ -29,14 +29,17 @@ import {
 import { BranchSelectorDropdown } from './ui/branch-selector.js';
 import { AuthGuideCard } from './ui/auth-guide-card.js';
 import { UpgradeNotificationCard } from './ui/upgrade-card.js';
-import { NetworkAlertBanner, RepoNoticeBar } from './ui/network-banner.js';
+import { NetworkAlertBanner } from './ui/network-banner.js';
 import { SyncStatusBadge } from './ui/sync-status-badge.js';
 import { CommitDetailModal } from './ui/commit-modal.js';
 import { GlobalSyncSettingsModal } from './ui/sync-settings-modal.js';
 import { GithubHelpModal } from './ui/help-modal.js';
-import { GithubWorkspacePanel } from './ui/workspace-panel.js';
+import { PrReviewModal, splitDiffByFile } from './ui/pr-review-modal.js';
+import { SessionPrOverlay, SessionPrPanel, SessionPrTabTitle, injectSessionPrStyles, stopSessionPrPollingExport, watchSessionPrVisibility, resetSessionPrModuleState } from './ui/session-pr-panel.js';
 
 export {
+  runConclusionBadge,
+  splitDiffByFile,
   formatRelativeTime,
   rollupCiStatus,
   reviewDecisionBadge,
@@ -64,12 +67,10 @@ export {
   AuthGuideCard,
   UpgradeNotificationCard,
   NetworkAlertBanner,
-  RepoNoticeBar,
   SyncStatusBadge,
   CommitDetailModal,
   GlobalSyncSettingsModal,
   GithubHelpModal,
-  GithubWorkspacePanel,
 };
 
 window.__ModuleLoader__.load({
@@ -81,6 +82,109 @@ window.__ModuleLoader__.load({
 
     var React = require("react");
     var currentPluginCtx: any = null;
+
+    /**
+     * 外部链接的统一打开策略：优先 DSH 自己的右侧栏浏览器标签
+     * （ctx.sidebarRight.openTab('browser', { params: { url } }) —— 与 sidebar_open
+     * 工具走的是同一条原生通道），拿不到这个能力时回退系统浏览器。
+     *
+     * 为什么不用 iframe：GitHub 对绝大多数页面发 X-Frame-Options: deny，
+     * 内嵌必然白屏；原生 browser 标签是 DSH 自己托管的载体，没有这个限制。
+     */
+    function openUrlSmart(url: string): boolean {
+      try {
+        if (!url || typeof url !== "string") return false;
+        if (!/^https?:\/\//i.test(url)) return false;
+        var ctx: any = currentPluginCtx;
+        var sidebarRight = ctx && typeof ctx.get === "function" ? ctx.get("sidebarRight") : null;
+        if (sidebarRight && typeof sidebarRight.openTab === "function") {
+          sidebarRight.openTab("browser", { params: { url: url } });
+          return true;
+        }
+      } catch (e) {
+        // 版本不匹配/服务未就绪：静默回退，不让一次跳转打断整个面板
+      }
+      return false;
+    }
+
+    /** 系统浏览器兜底（内部浏览器不可用时） */
+    function openUrlFallback(url: string) {
+      try {
+        window.open(url, "_blank", "noopener,noreferrer");
+      } catch (e) {
+        /* 弹窗被拦截：无能为力，交给用户手点 */
+      }
+    }
+
+    /** 内部浏览器优先 + 系统浏览器兜底：PR 面板的「在 GitHub 打开」 */
+    function openUrlSmartOrFallback(url: string) {
+      if (!url) return;
+      if (!openUrlSmart(url)) openUrlFallback(url);
+    }
+
+    /**
+     * 打开某条 PR 的右列面板。
+     *
+     * 两步都要做：openTab 只把 tab 放进右栏的 tab 列表，右栏本身如果是收起状态，
+     * 用户点完浮窗会「什么都没发生」——所以补一次 openRightbar(true, false)，
+     * 让右栏以普通（非全屏）形态展开。
+     */
+    function openSessionPrTab(params: any) {
+      var number = Number(params && params.number);
+      if (!Number.isInteger(number) || number <= 0) return;
+      var repo = params && typeof params.repo === "string" ? params.repo : undefined;
+      var ctx: any = currentPluginCtx;
+      var opened = false;
+      try {
+        var sidebarRight = ctx && typeof ctx.get === "function" ? ctx.get("sidebarRight") : null;
+        if (sidebarRight && typeof sidebarRight.openTab === "function") {
+          sidebarRight.openTab("github-pr", { params: repo ? { repo: repo, number: number } : { number: number } });
+          opened = true;
+        }
+        var layout = ctx && typeof ctx.get === "function" ? ctx.get("layout") : null;
+        if (layout && typeof layout.openRightbar === "function") {
+          layout.openRightbar(true, false);
+        }
+      } catch (e) {
+        opened = false;
+      }
+      // 老版本 DSH 没有 sidebarRight / 没注册这个 tab 类型时，点浮窗不能变成"什么都没发生"：
+      // 退到 PR 页面，至少用户拿到一个能用的结果。
+      if (!opened && repo) {
+        openUrlSmartOrFallback("https://github.com/" + repo + "/pull/" + number);
+      }
+    }
+
+    /**
+     * 全局捕获阶段的链接接管：只处理本插件面板里的 http(s) 链接。
+     *
+     * 为什么用 document 级捕获而不是逐个 <a> 加 onClick：面板里有十几处仓库/PR/
+     * Issue/Actions 链接分散在多个渲染函数里，逐个改既容易漏、又会在下次改版时
+     * 重新长出「跳系统浏览器」的链接。这里用 [class*="dsh-github"] 限定作用域。
+     * 带修饰键（⌘/Ctrl/Shift/Alt）或非左键时不接管——那是用户明确要新标签/新窗口。
+     */
+    function installSmartLinkHandler() {
+      if (typeof document === "undefined") return;
+      document.addEventListener(
+        "click",
+        function (ev: any) {
+          try {
+            if (!ev || ev.defaultPrevented) return;
+            if (ev.button !== 0 || ev.metaKey || ev.ctrlKey || ev.shiftKey || ev.altKey) return;
+            var target = ev.target as HTMLElement;
+            var anchor = target && target.closest ? target.closest('a[href^="http"]') : null;
+            if (!anchor) return;
+            if (!target.closest('[class*="dsh-github"]')) return;
+            var href = anchor.getAttribute("href");
+            if (!href) return;
+            if (openUrlSmart(href)) ev.preventDefault();
+          } catch (e) {
+            // 拦截失败就走浏览器默认行为，绝不让它变成「点了没反应」
+          }
+        },
+        true
+      );
+    }
 
     /**
      * 按容器记录的 Tab 键应用互斥显示状态（hidden 页 + active 按钮）。
@@ -430,13 +534,120 @@ window.__ModuleLoader__.load({
       onCloseDiff: (() => void) | null = null,
       onOpenInDsh: ((filePath: string) => void) | null = null,
       headerCardsVisible: boolean = true,
-      onToggleHeaderCards: (() => void) | null = null
+      onToggleHeaderCards: (() => void) | null = null,
+      onReviewPr: ((n: number) => void) | null = null
     ) {
       var auth = data ? data.auth : null;
       var repo = data ? data.repo : null;
+      // 聚合根：候选仓库与当前绑定项（repoDiscovery='aggregate' 下才非空）
+      var repoCandidates: string[] = (data && (data as any).repoCandidates) || [];
+      var repoRootPath: string = (data && (data as any).repoRoot) || "";
+      var repoVia: string = (data && (data as any).repoVia) || "";
+      var repoShortName = function (p: string) {
+        var parts = String(p || "").split(/[\\/]/).filter(Boolean);
+        return parts.length ? parts[parts.length - 1] : String(p || "");
+      };
+      var switchWorkspaceRepo = function (next: string) {
+        if (!next || next === repoRootPath) return;
+        fetch("/api/github/select-repo", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ cwd: cwd || undefined, repo: next }),
+        })
+          .then(function (r) { return r.json(); })
+          .then(function (json: any) {
+            if (!json || !json.ok) {
+              (onShowToast || function () {})(`❌ 切换仓库失败：${(json && json.error) || "未知错误"}`);
+              return;
+            }
+            (onShowToast || function () {})(`✅ 已绑定 ${repoShortName(next)}`);
+            onRefresh();
+          })
+          .catch(function (err: any) {
+            (onShowToast || function () {})(`❌ 切换仓库失败：${(err && err.message) || err}`);
+          });
+      };
+      // 候选 > 1 才渲染下拉框：只有一个仓库时它只是噪音
+      var repoSelectorEl = (repo && repoCandidates.length > 1)
+        ? h(
+            "span",
+            { style: { display: "inline-flex", alignItems: "center", gap: "4px", minWidth: 0 } },
+            h("select", {
+              className: "dsh-github-repo-select",
+              value: repoRootPath || repoCandidates[0],
+              title: `当前工作区下有 ${repoCandidates.length} 个仓库，可手动切换绑定哪一个：\n${repoCandidates.join("\n")}`,
+              onChange: function (e: any) {
+                switchWorkspaceRepo(e && e.target ? e.target.value : "");
+              },
+            }, repoCandidates.map(function (p) {
+              return h("option", { key: p, value: p }, repoShortName(p));
+            })),
+            repoVia === "manual"
+              ? h("span", {
+                  className: "dsh-github-badge",
+                  style: { backgroundColor: "rgba(56,139,253,.15)", color: "var(--dsw-alias-label-primary,#1f2328)", fontSize: "11px" },
+                  title: "该仓库由你手动指定，不再按提交活跃度自动选择（选回第一项以外的任意项即保持手动）",
+                }, "手动")
+              : null
+          )
+        : null;
       var prs = (data && data.pullRequests) || [];
       var issues = (data && data.issues) || [];
       var runs = (data && data.runs) || [];
+      // 对话里出现过的 PR：由宿主从会话转写里提取（/api/github/session-prs）
+      var mentionedMeta = (data && (data as any).mentioned) || { items: [], total: 0, filter: "all", loading: false };
+      var mentionedAll: any[] = mentionedMeta.items || [];
+      var mentionedFilter: string = mentionedMeta.filter || "all";
+      var onMentionedFilter = (data as any) && (data as any).onMentionedFilter;
+      var onMentionedMore = (data as any) && (data as any).onMentionedMore;
+      var meLogin: string = (auth && auth.user) || "";
+      // 「我参与」= 我发起的；评审过我这里拿不到（列表接口只回了 author），先只按作者判定
+      var mentionedPrs = mentionedFilter === "mine"
+        ? mentionedAll.filter(function (it: any) { return it.author && it.author.login === meLogin; })
+        : mentionedAll;
+
+      /*
+       * 台账行骨架：[14px 状态脊柱][内容 flex][28px 右槽]。
+       * 状态放左侧成列，眼睛才能纵向扫；右槽固定 28px，常态是时间、
+       * hover 原位换成按钮——槽宽不变就不会 reflow，也不会和徽章抢位置。
+       */
+      var toneOf = function (t: string) {
+        return t === "green" ? "success" : t === "red" ? "error"
+          : t === "yellow" ? "warn" : t === "blue" ? "running" : "neutral";
+      };
+      var renderRow = function (o: any) {
+        var meta: any[] = (o.meta || []).filter(Boolean);
+        var chipCls = "gh2-chip gh2-chip--" + (o.tone || "idle");
+        return h(
+          "div",
+          { key: o.key, className: "gh2-row" },
+          h("span", { className: "gh2-dot gh2-dot--" + (o.tone || "idle"), title: o.statusText || "" }, o.glyph || "◇"),
+          h(
+            "div",
+            { className: "gh2-row-main" },
+            h(
+              "div",
+              { className: "gh2-row-title" },
+              o.prefix ? h("span", { className: "gh2-prefix" }, o.prefix) : null,
+              o.href
+                ? h("a", { href: o.href, target: "_blank", title: o.titleTitle || undefined }, o.title)
+                : h("span", { style: { overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }, title: o.titleTitle || undefined }, o.title)
+            ),
+            meta.length
+              ? h("div", { className: "gh2-row-sub" }, meta.map(function (m: any, i: number) {
+                  return h("span", { key: i, className: m.mono ? "gh-mono" : undefined, title: m.title || undefined }, m.text);
+                }))
+              : null
+          ),
+          h(
+            "div",
+            { className: "gh2-row-slot" },
+            h("span", { className: "gh2-row-slot-time" }, o.time || ""),
+            o.chip ? h("span", { className: chipCls, title: o.statusText || undefined }, o.chip) : null,
+            o.action || null
+          )
+        );
+      };
 
       var effectiveUpdateInfo = updateInfo || data?.updateInfo;
       var upgradeBannerEl = effectiveUpdateInfo && effectiveUpdateInfo.hasUpdate
@@ -454,13 +665,6 @@ window.__ModuleLoader__.load({
             },
           })
         : null;
-
-      // 仓库配置提示条：与网络告警互斥展示。
-      // 仓库关了 Issues 时不该同时出现「网络连接失败」——那是两件性质相反的事
-      // （一个是稳定配置事实，一个是瞬时传输故障）。有真网络错误时以错误优先。
-      var repoNoticeBarEl = networkAlertBannerEl
-        ? null
-        : h(RepoNoticeBar, { isRightbar, notices: data?.notices });
 
       var headerEl = h(
         "div",
@@ -532,60 +736,71 @@ window.__ModuleLoader__.load({
       var branchPr = data && data.branchPr;
       var repoCardEl = h(
         "div",
-        { className: "dsh-github-card" },
+        { className: "gh2-card" },
         h(
           "div",
-          { className: "dsh-github-card-title", style: { display: "flex", justifyContent: "space-between", alignItems: "center" } },
-          h("span", null, "当前工作区 GitHub 仓库"),
-          repo && repo.stargazerCount !== undefined
-            ? h(
-                "a",
-                {
-                  href: `${repo.url}/stargazers`,
-                  target: "_blank",
-                  className: "dsh-github-badge",
-                  style: {
-                    textDecoration: "none",
-                    display: "inline-flex",
-                    alignItems: "center",
-                    gap: "3px",
-                    fontWeight: 600,
-                    fontSize: "11px",
-                    cursor: "pointer",
-                    padding: "1px 6px",
-                  },
-                  title: `当前仓库 Star 数量: ${repo.stargazerCount}（点击前往 GitHub 查看）`,
+          { className: "gh2-card-top" },
+          h("span", { className: "gh2-repo-mark" }, "⌘"),
+          repo
+            ? h("a", { href: repo.url, target: "_blank", className: "gh2-slug", title: "在 GitHub 打开" }, repo.nameWithOwner)
+            : h("span", { className: "gh2-slug gh2-slug--error" }, "未关联 GitHub 仓库"),
+          repo
+            ? h("button", {
+                className: "gh2-icon-btn",
+                title: "在 DSH 内部浏览器打开仓库主页",
+                onClick: function () {
+                  if (repo?.url && !openUrlSmart(repo.url)) openUrlFallback(repo.url);
                 },
-                "⭐ ",
-                String(repo.stargazerCount)
-              )
+              }, "↗")
             : null
         ),
-        h(
-          "div",
-          { className: "dsh-github-card-value" },
-          repo
-            ? h("a", { href: repo.url, target: "_blank", className: "dsh-github-repo-link" }, repo.nameWithOwner)
-            : h("span", { style: { color: "var(--dsw-alias-state-error-primary, #cf222e)" } }, "未检测到关联的 GitHub 仓库"),
-          repo
-            ? h(BranchSelectorDropdown, {
+        repo
+          ? h(
+              "div",
+              { className: "gh2-card-meta" },
+              h(BranchSelectorDropdown, {
                 currentBranch: gitSt?.branch || repo.defaultBranch || "main",
                 cwd,
                 branchesData: data?.branches,
                 onBranchSwitched: () => onRefresh(),
                 showToast: onShowToast || (() => {}),
-              })
-            : null
-        ),
-        repo && repo.description
-          ? h("div", { className: "dsh-github-card-desc" }, repo.description)
+              }),
+              gitSt && (gitSt.ahead || gitSt.behind)
+                ? h("span", { className: "gh2-sync", title: "本地领先 / 落后远程的提交数" }, `↑${gitSt.ahead || 0} ↓${gitSt.behind || 0}`)
+                : null,
+              gitSt && gitSt.dirtyCount
+                ? h("span", { className: "gh2-sync", title: "未提交改动数" }, `±${gitSt.dirtyCount}`)
+                : null,
+              repoSelectorEl
+            )
           : null,
-        auth && auth.loggedIn
-          ? h("div", { className: "dsh-github-card-subtext" }, `CLI 认证账号: ${auth.user} (${auth.scopes?.join(", ") || "已登录"})`)
+        repo && repo.description
+          ? h("div", { className: "gh2-card-desc", style: { fontSize: "12px", color: "var(--dsw-alias-label-secondary,#57606a)", paddingLeft: "32px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, repo.description)
           : null,
         !repo
-          ? h("div", { className: "dsh-github-card-subtext" }, "若本地已有 git 仓库，请运行 `git remote add github <url>` 或 `git remote add origin <url>` 关联远程仓库。")
-          : null
+          ? h("div", { className: "gh2-card-desc", style: { fontSize: "12px", color: "var(--dsw-alias-label-secondary,#57606a)", paddingLeft: "32px" } }, "本地已有仓库时，可用 git remote add origin <url> 关联远程")
+          : null,
+        // 调试信息（账号 / scopes / 仓库根 / 绑定方式）默认折叠
+        h(
+          "details",
+          { className: "gh2-details" },
+          h("summary", null, auth && auth.loggedIn ? `@${auth.user}` : "详情"),
+          h(
+            "div",
+            { className: "gh2-details-body" },
+            repoRootPath ? h("div", null, `仓库根: ${repoRootPath}`) : null,
+            h("div", null, `绑定方式: ${repoVia || "自动（最近活跃）"}`),
+            repo && repo.stargazerCount !== undefined
+              ? h("div", null, `Star: ${repo.stargazerCount} `, h("a", { href: `${repo.url}/stargazers`, target: "_blank", style: { color: "inherit" } }, "查看"))
+              : null,
+            auth && auth.loggedIn && Array.isArray(auth.scopes) && auth.scopes.length
+              ? h("div", null, `CLI scopes(${auth.scopes.length}): ${auth.scopes.join(", ")}`)
+              : null,
+            gitSt
+              ? h("div", null, `分支: ${gitSt.branch || "—"} · ahead ${gitSt.ahead || 0} / behind ${gitSt.behind || 0} · 脏文件 ${gitSt.dirtyCount || 0}`)
+              : null
+          )
+        )
       );
 
       var commitLog = data && data.commitLog;
@@ -861,118 +1076,75 @@ window.__ModuleLoader__.load({
           );
 
       // 快捷操作栏 (仅在检测到关联仓库时展示，未绑定仓库时不展示虚假按钮)
-      var actionsBarEl = repo ? h(
-        "div",
-        { className: "dsh-github-quick-actions" },
-        h(
-          "button",
-          {
-            className: "dsh-github-action-btn",
-            title: "在系统默认浏览器中打开当前仓库主页",
-            onClick: () => {
-              if (repo?.url) {
-                window.open(repo.url, "_blank", "noopener,noreferrer");
-              }
-            },
-          },
-          "🌐 浏览器打开"
-        ),
-        h(
-          "button",
-          {
-            className: "dsh-github-action-btn",
-            title: "在系统默认浏览器中查看所有 Pull Requests",
-            onClick: () => {
-              if (repo?.url) {
-                window.open(`${repo.url}/pulls`, "_blank", "noopener,noreferrer");
-              }
-            },
-          },
-          "🔀 查看所有 PRs"
-        ),
-        h(
-          "button",
-          {
-            className: "dsh-github-action-btn",
-            title: "在系统默认浏览器中打开 GitHub 官方对比与创建 Pull Request 页面",
-            onClick: () => {
-              if (repo?.url) {
-                window.open(`${repo.url}/compare`, "_blank", "noopener,noreferrer");
-              }
-            },
-          },
-          "🚀 快速创建 PR"
-        ),
-        h(
-          "button",
-          {
-            className: "dsh-github-action-btn",
-            title: "在系统默认浏览器中查看当前仓库所有 Issues",
-            onClick: () => {
-              if (repo?.url) {
-                window.open(`${repo.url}/issues`, "_blank", "noopener,noreferrer");
-              }
-            },
-          },
-          "📋 查看所有 Issues"
-        ),
-        h(
-          "button",
-          {
-            className: "dsh-github-action-btn",
-            title: "在系统默认浏览器中打开 GitHub 官方新建 Issue 页面",
-            onClick: () => {
-              if (repo?.url) {
-                window.open(`${repo.url}/issues/new`, "_blank", "noopener,noreferrer");
-              }
-            },
-          },
-          "📝 新建 Issue"
-        )
-      ) : null;
+      // 快捷操作：写操作要顺手可达，但不必视觉抢眼——降级为列表底部的一行文字链接
+      var actionsBarEl = repo
+        ? h(
+            "div",
+            { className: "gh2-quick" },
+            h("button", {
+              className: "gh2-quick-btn",
+              onClick: () => { if (repo?.url) { const u = `${repo.url}/compare`; if (!openUrlSmart(u)) openUrlFallback(u); } },
+            }, "新建 PR"),
+            h("button", {
+              className: "gh2-quick-btn",
+              onClick: () => { if (repo?.url) { const u = `${repo.url}/issues/new`; if (!openUrlSmart(u)) openUrlFallback(u); } },
+            }, "新建 Issue"),
+            h("button", {
+              className: "gh2-quick-btn",
+              onClick: () => { if (repo?.url) { const u = `${repo.url}/pulls`; if (!openUrlSmart(u)) openUrlFallback(u); } },
+            }, "全部 PR"),
+            h("button", {
+              className: "gh2-quick-btn",
+              onClick: () => { if (repo?.url) { const u = `${repo.url}/issues`; if (!openUrlSmart(u)) openUrlFallback(u); } },
+            }, "全部 Issues")
+          )
+        : null;
 
       var prSectionEl = h(
         "div",
         { className: "dsh-github-section" },
-        h("div", { className: "dsh-github-section-header" }, h("h3", null, `🔀 Pull Requests (${prs.length})`)),
+        h("div", { className: "dsh-github-section-header" },
+          h("h3", { className: "gh2-section-title" }, "Pull requests"),
+          h("span", { className: "gh2-section-count" }, String(prs.length))
+        ),
         prs.length === 0
-          ? h("div", { className: "dsh-github-empty" }, "当前无开放中的 PR")
+          ? h("div", { className: "gh2-empty" }, "没有打开的 PR")
           : h(
               "div",
-              { className: "dsh-github-list" },
-              prs.map((pr: any) => {
+              { className: "gh2-list" },
+              prs.map(function (pr: any) {
                 var ci = rollupCiStatus(pr.statusCheckRollup);
                 var rv = reviewDecisionBadge(pr.reviewDecision);
-                var relTime = formatRelativeTime(pr.updatedAt);
-                return h(
-                  "div",
-                  { key: pr.number, className: "dsh-github-item" },
-                  h("a", {
-                    className: "dsh-github-item-title",
-                    href: pr.url,
-                    target: "_blank",
-                    title: relTime ? `更新于 ${pr.updatedAt}` : undefined,
-                  }, `${pr.isDraft ? "⚪ " : ""}#${pr.number} ${pr.title}`),
-                  h(
-                    "div",
-                    { className: "dsh-github-item-meta" },
-                    h("span", null, `${pr.headRefName} → ${pr.baseRefName}`),
-                    pr.mergeable === "CONFLICTING"
-                      ? h("span", { className: "dsh-github-badge dsh-badge-red" }, "代码冲突")
-                      : h("span", { className: "dsh-github-badge dsh-badge-green" }, "可合并"),
-                    ci === "fail"
-                      ? h("span", { className: "dsh-github-badge dsh-badge-red" }, "❌ CI 失败")
-                      : ci === "pending"
-                      ? h("span", { className: "dsh-github-badge dsh-badge-yellow" }, "⏳ CI 运行中")
-                      : ci === "pass"
-                      ? h("span", { className: "dsh-github-badge dsh-badge-green" }, "✅ CI 通过")
-                      : null,
-                    rv
-                      ? h("span", { className: `dsh-github-badge dsh-badge-${rv.kind}` }, rv.text)
-                      : null,
-                    relTime ? h("span", null, relTime) : null
-                  )
-                );
+                var tone = pr.mergeable === "CONFLICTING" || ci === "fail" ? "error"
+                  : pr.isDraft ? "neutral"
+                  : ci === "pending" ? "running" : "success";
+                var glyph = tone === "error" ? "✕" : tone === "neutral" ? "◇" : tone === "running" ? "○" : "●";
+                var statusText = [
+                  pr.mergeable === "CONFLICTING" ? "代码冲突" : "可合并",
+                  ci === "fail" ? "CI 失败" : ci === "pending" ? "CI 运行中" : ci === "pass" ? "CI 通过" : "",
+                  rv ? rv.text : "",
+                ].filter(Boolean).join(" · ");
+                return renderRow({
+                  key: "pr-" + pr.number,
+                  glyph: glyph,
+                  tone: tone,
+                  chip: pr.mergeable === "CONFLICTING" ? "冲突" : ci === "fail" ? "CI 失败" : ci === "pending" ? "运行中" : "可合并",
+                  statusText: statusText,
+                  prefix: "#" + pr.number,
+                  title: (pr.isDraft ? "[Draft] " : "") + (pr.title || ""),
+                  href: pr.url,
+                  meta: [
+                    { text: `${pr.headRefName || "?"} → ${pr.baseRefName || "?"}`, mono: true },
+                  ],
+                  time: formatRelativeTime(pr.updatedAt),
+                  action: typeof onReviewPr === "function"
+                    ? h("button", {
+                        className: "gh2-icon-btn gh2-row-slot-btn",
+                        title: "在面板内评审这个 PR",
+                        onClick: function (e: any) { e.stopPropagation(); e.preventDefault(); onReviewPr(pr.number); },
+                      }, "✓")
+                    : null,
+                });
               })
             )
       );
@@ -980,123 +1152,209 @@ window.__ModuleLoader__.load({
       var issueSectionEl = h(
         "div",
         { className: "dsh-github-section" },
-        h(
-          "div",
-          { className: "dsh-github-section-header" },
-          h("h3", null, `📋 仓库 Issues (${issues.length})`),
-          repo?.url
-            ? h(
-                "a",
-                {
-                  href: `${repo.url}/issues`,
-                  target: "_blank",
-                  style: { fontSize: "11px", color: "var(--dsw-alias-link, #0969da)", textDecoration: "none" },
-                },
-                "全部 ↗"
-              )
-            : null
+        h("div", { className: "dsh-github-section-header" },
+          h("h3", { className: "gh2-section-title" }, "Issues"),
+          h("span", { className: "gh2-section-count" }, String(issues.length))
         ),
         issues.length === 0
-          ? h("div", { className: "dsh-github-empty" }, "当前无开放中的 Issue")
+          ? h("div", { className: "gh2-empty" }, "没有打开的 Issue")
           : h(
               "div",
-              { className: "dsh-github-list" },
-              issues.map((issue: any) => {
-                var cats = issue.categories || [];
-                var badges: any[] = [];
-                if (cats.includes("reported")) {
-                  badges.push(h("span", { key: "rep", className: "dsh-github-badge dsh-badge-purple" }, "用户反馈"));
-                }
-                if (cats.includes("assigned")) {
-                  badges.push(h("span", { key: "asn", className: "dsh-github-badge dsh-badge-blue" }, "已分配"));
-                }
-                if (cats.includes("created")) {
-                  badges.push(h("span", { key: "crt", className: "dsh-github-badge dsh-badge-green" }, "我发起的"));
-                }
-
-                return h(
-                  "div",
-                  { key: issue.number, className: "dsh-github-item" },
-                  h(
-                    "div",
-                    { style: { display: "flex", alignItems: "center", gap: "6px", flexWrap: "wrap" } },
-                    h(
-                      "a",
-                      { className: "dsh-github-item-title", href: issue.url, target: "_blank" },
-                      `#${issue.number} ${issue.title}`
-                    ),
-                    ...badges
-                  ),
-                  h(
-                    "div",
-                    { className: "dsh-github-item-meta" },
-                    h("span", null, `由 ${issue.author?.login || "未知"} 提出`),
-                    issue.assignees && issue.assignees.length > 0
-                      ? h("span", null, `指派: ${issue.assignees.map((a: any) => a.login).join(", ")}`)
-                      : null,
-                    issue.labels && issue.labels.length > 0
-                      ? issue.labels.map((lbl: any) =>
-                          h("span", { key: lbl.name, className: "dsh-github-badge dsh-badge-yellow" }, lbl.name)
-                        )
-                      : null
-                  )
-                );
+              { className: "gh2-list" },
+              issues.map(function (issue: any) {
+                var labels = (issue.labels || []).map(function (l: any) { return typeof l === "string" ? l : (l && l.name) || ""; }).filter(Boolean);
+                var author = issue.author && (issue.author.login || issue.author.name);
+                return renderRow({
+                  key: "issue-" + issue.number,
+                  glyph: "○",
+                  tone: "neutral",
+                  statusText: "进行中",
+                  prefix: "#" + issue.number,
+                  title: issue.title || "",
+                  href: issue.url,
+                  meta: [
+                    author ? { text: "@" + author } : null,
+                    labels.length ? { text: labels.slice(0, 2).join(", "), title: labels.join(", ") } : null,
+                  ].filter(Boolean),
+                  time: formatRelativeTime(issue.updatedAt),
+                });
               })
             )
       );
 
+      // 同名 + 同分支的运行折叠成一组（matrix / 重跑会把同一个 job 刷出好几条）
+      var runGroups = (function () {
+        var order: string[] = [];
+        var map: any = {};
+        runs.forEach(function (r: any) {
+          var key = String(r.name || "") + "\u0000" + String(r.headBranch || "");
+          var ts = Date.parse(r.createdAt || "") || 0;
+          if (!map[key]) {
+            map[key] = { key: key, sample: r, count: 0, ids: [], latestTs: ts };
+            order.push(key);
+          }
+          map[key].count += 1;
+          map[key].ids.push(r.databaseId);
+          if (ts > map[key].latestTs) { map[key].latestTs = ts; map[key].sample = r; }
+        });
+        return order.map(function (k) { return map[k]; });
+      })();
+
       var runSectionEl = h(
         "div",
         { className: "dsh-github-section" },
-        h("div", { className: "dsh-github-section-header" }, h("h3", null, `⚡ 最近 Actions 流水线 (${runs.length})`)),
+        h("div", { className: "dsh-github-section-header" },
+          h("h3", { className: "gh2-section-title" }, "Actions"),
+          h("span", { className: "gh2-section-count" }, String(runs.length))
+        ),
         runs.length === 0
-          ? h("div", { className: "dsh-github-empty" }, "暂无工作流记录")
+          ? h("div", { className: "gh2-empty" }, "暂无工作流运行")
           : h(
               "div",
-              { className: "dsh-github-list" },
-              runs.map((r: any) =>
-                h(
-                  "div",
-                  { key: r.databaseId, className: "dsh-github-item" },
-                  h("a", {
-                    className: "dsh-github-item-title",
-                    href: r.url,
-                    target: "_blank",
-                    title: r.createdAt ? `始于 ${r.createdAt}` : undefined,
-                  }, r.name),
-                  h(
-                    "div",
-                    { className: "dsh-github-item-meta" },
-                    h("span", null, `分支: ${r.headBranch}`),
-                    r.event ? h("span", null, eventLabel(r.event)) : null,
-                    formatRelativeTime(r.createdAt) ? h("span", null, formatRelativeTime(r.createdAt)) : null,
-                    r.conclusion === "success"
-                      ? h("span", { className: "dsh-github-badge dsh-badge-green" }, "✓ 成功")
-                      : r.conclusion === "failure"
-                      ? h("span", { className: "dsh-github-badge dsh-badge-red" }, "✕ 失败")
-                      : h("span", { className: "dsh-github-badge dsh-badge-yellow" }, r.status)
-                  ),
-                  r.conclusion === "failure"
-                    ? h("div", {
-                        className: "dsh-github-card-subtext",
-                        style: { fontSize: "11px", marginTop: "2px" },
-                      }, `💡 让 Agent 调用 github_run(action:'log_failed', run_id:'${r.databaseId}') 提取失败日志定位原因`)
-                    : null
-                )
-              )
+              { className: "gh2-list" },
+              runGroups.map(function (group: any) {
+                var r = group.sample;
+                var badge = runConclusionBadge(r.conclusion, r.status);
+                var conclusion = String(r.conclusion || "").toLowerCase();
+                var glyph = conclusion === "success" ? "●"
+                  : conclusion === "failure" || conclusion === "startup_failure" ? "✕"
+                  : conclusion === "cancelled" ? "⊘"
+                  : conclusion === "timed_out" ? "⏱"
+                  : conclusion === "skipped" ? "⤼"
+                  : String(r.status || "").toLowerCase() === "in_progress" ? "○"
+                  : conclusion === "" ? "◷" : "◇";
+                return renderRow({
+                  key: group.key,
+                  glyph: glyph,
+                  tone: toneOf(badge.tone),
+                  chip: badge.label.replace(/^[^\u4e00-\u9fa5]+/, "").trim(),
+                  statusText: `${badge.label}（status ${r.status || "-"} / conclusion ${r.conclusion || "-"}）`,
+                  title: r.name || "",
+                  href: r.url,
+                  meta: [
+                    { text: r.headBranch || "", mono: true },
+                    group.count > 1 ? { text: `${group.count} 次`, title: `同名同分支共 ${group.count} 条：${group.ids.join(", ")}` } : null,
+                  ].filter(Boolean),
+                  time: formatRelativeTime(r.createdAt),
+                  action: h("button", {
+                    className: "gh2-icon-btn gh2-row-slot-btn",
+                    title: "在 GitHub 打开这次运行",
+                    onClick: function () { if (r.url && !openUrlSmart(r.url)) openUrlFallback(r.url); },
+                  }, "↗"),
+                });
+              })
             )
       );
+
+      var mentionedSectionEl = (function () {
+        var groups: any[] = [
+          { key: "open", label: "待审", match: function (it: any) { return !it.mergedAt && String(it.state || "").toUpperCase() === "OPEN" && !it.isDraft; } },
+          { key: "draft", label: "草稿", match: function (it: any) { return Boolean(it.isDraft); } },
+          { key: "merged", label: "已合并", match: function (it: any) { return Boolean(it.mergedAt); } },
+          { key: "closed", label: "已关闭", match: function (it: any) { return String(it.state || "").toUpperCase() === "CLOSED" && !it.mergedAt; } },
+        ];
+        var ungrouped: any[] = [];
+        var buckets: any = {};
+        mentionedPrs.forEach(function (it: any) {
+          var placed = false;
+          for (var i = 0; i < groups.length; i += 1) {
+            if (groups[i].match(it)) { (buckets[groups[i].key] = buckets[groups[i].key] || []).push(it); placed = true; break; }
+          }
+          if (!placed) ungrouped.push(it);
+        });
+        if (ungrouped.length) buckets.other = ungrouped;
+
+        var filterBtn = function (key: string, label: string) {
+          var active = mentionedFilter === key;
+          return h(
+            "button",
+            {
+              key: key,
+              className: "gh2-quick-btn",
+              style: active ? { borderColor: "var(--gh-c-accent)", color: "var(--gh-c-accent)" } : undefined,
+              onClick: function () { if (typeof onMentionedFilter === "function") onMentionedFilter(key); },
+            },
+            label
+          );
+        };
+
+        var rowsFor = function (list: any[]) {
+          return h("div", { className: "gh2-list" }, list.map(function (it: any) {
+            var stateName = String(it.state || "").toUpperCase();
+            var isMerged = Boolean(it.mergedAt);
+            var tone = stateName === "OPEN" ? (it.isDraft ? "idle" : "ok") : isMerged ? "busy" : "bad";
+            var glyph = stateName === "OPEN" ? "●" : isMerged ? "◆" : "✕";
+            return renderRow({
+              key: "mentioned-" + it.number,
+              glyph: glyph,
+              tone: tone,
+              chip: it.isDraft ? "草稿" : stateName === "OPEN" ? "待审" : isMerged ? "已合并" : "已关闭",
+              statusText: stateName + (isMerged ? " · merged" : ""),
+              prefix: "#" + it.number,
+              title: it.title || "",
+              href: it.url || undefined,
+              meta: it.author && it.author.login ? [{ text: "@" + it.author.login }] : [],
+              time: formatRelativeTime(it.updatedAt || it.createdAt),
+              action: h("button", {
+                className: "gh2-icon-btn gh2-row-slot-btn",
+                title: "在面板内查看与评审",
+                onClick: function (e: any) {
+                  e.stopPropagation();
+                  e.preventDefault();
+                  if (typeof onReviewPr === "function") onReviewPr(it.number);
+                },
+              }, "✓"),
+            });
+          }));
+        };
+
+        return h(
+          "div",
+          { className: "dsh-github-section" },
+          h("div", { className: "dsh-github-section-header" },
+            h("h3", { className: "gh2-section-title" }, "会话中提到的 PR"),
+            h("span", { className: "gh2-section-count" }, String(mentionedAll.length) + (mentionedMeta.total > mentionedAll.length ? "/" + mentionedMeta.total : ""))
+          ),
+          h("div", { style: { display: "flex", gap: "6px", marginBottom: "8px" } },
+            filterBtn("all", "全部"),
+            filterBtn("mine", "我发起的")
+          ),
+          mentionedPrs.length === 0
+            ? h("div", { className: "gh2-empty" },
+                h("div", null, mentionedMeta.loading ? "正在从会话里提取…" : "这段对话里还没有出现过 PR"),
+                h("div", { style: { fontSize: "11px", opacity: .75 } }, "贴一个 PR 地址、owner/repo#123 或直接写 #3934 都会出现在这里"))
+            : h("div", { style: { display: "flex", flexDirection: "column", gap: "12px" } },
+                groups.concat([{ key: "other", label: "其他" }]).map(function (g: any) {
+                  var list = buckets[g.key];
+                  if (!list || list.length === 0) return null;
+                  return h("div", { key: g.key },
+                    h("div", { style: { display: "flex", alignItems: "center", gap: "6px", margin: "0 2px 4px", fontSize: "11px", color: "var(--gh-c-fg2)" } },
+                      h("span", null, g.label),
+                      h("span", { style: { opacity: .7 } }, String(list.length))),
+                    rowsFor(list));
+                })),
+          mentionedAll.length > 0 && mentionedAll.length < mentionedMeta.total
+            ? h("div", { style: { marginTop: "8px", textAlign: "center" } },
+                h("button", {
+                  className: "gh2-quick-btn",
+                  disabled: Boolean(mentionedMeta.loading),
+                  onClick: function () { if (typeof onMentionedMore === "function") onMentionedMore(); },
+                }, mentionedMeta.loading ? "加载中…" : "加载更多（已显示 " + mentionedAll.length + " / " + mentionedMeta.total + "）"))
+            : null
+        );
+      })();
 
       var authGuideEl = (!auth?.loggedIn && !auth?.networkError && syncStatus !== "failed")
         ? h(AuthGuideCard, { auth, onRefresh, isRightbar })
         : null;
 
       var TAB_DEFS: Array<{ key: string; label: string; count: number | null; icon?: any }> = [
-        { key: "git", label: "Git", count: null, icon: renderGitIcon(13, "#1296db") },
-        { key: "dirty", label: "📁 未提交", count: gitSt ? gitSt.dirtyCount : null },
-        { key: "prs", label: "🔀 PR", count: prs.length },
-        { key: "issues", label: "📋 Issues", count: issues.length },
-        { key: "runs", label: "⚡ Actions", count: runs.length },
+        { key: "git", label: "Git", count: null, icon: renderGitIcon(12, "currentColor") },
+        { key: "dirty", label: "未提交", count: gitSt ? gitSt.dirtyCount : null },
+        { key: "prs", label: "PR", count: prs.length },
+        { key: "issues", label: "Issues", count: issues.length },
+        { key: "runs", label: "Actions", count: runs.length },
+        { key: "mentioned", label: "会话", count: mentionedPrs.length },
       ].filter(function (t) {
         if ((t.key === "git" || t.key === "dirty") && !gitSt) return false;
         return true;
@@ -1114,22 +1372,22 @@ window.__ModuleLoader__.load({
 
       var tabsBarEl = h(
         "div",
-        { className: "dsh-github-tabs", style: { marginBottom: "12px" } },
+        { className: "gh2-segments" },
         ...TAB_DEFS.map(function (t) {
-          var labelText = t.count !== null ? `${t.label} (${t.count})` : t.label;
           return h(
             "button",
             {
               key: t.key,
-              className: "dsh-github-tab-btn" + (t.key === defaultTab ? " active" : ""),
+              className: "gh2-segment" + (t.key === defaultTab ? " gh2-segment--active" : ""),
               "data-tab-btn": t.key,
-              style: t.icon ? { display: "inline-flex", alignItems: "center", gap: "5px" } : undefined,
               onClick: function (e: any) {
                 var container = (e.target as HTMLElement).closest("[data-active-tab]");
                 if (container) switchTab(container as HTMLElement, t.key);
               },
             },
-            t.icon ? [t.icon, " ", labelText] : labelText
+            t.icon || null,
+            h("span", null, t.label),
+            t.count !== null ? h("span", { className: "gh2-count" }, String(t.count)) : null
           );
         })
       );
@@ -1142,18 +1400,19 @@ window.__ModuleLoader__.load({
         h("div", { "data-tab-page": "issues", hidden: defaultTab !== "issues" }, issueSectionEl),
         h("div", { "data-tab-page": "runs", hidden: defaultTab !== "runs" }, runSectionEl),
         gitSt ? h("div", { "data-tab-page": "git", hidden: defaultTab !== "git" }, gitSectionEl) : null,
-        gitSt ? h("div", { "data-tab-page": "dirty", hidden: defaultTab !== "dirty" }, dirtySectionEl) : null
+        gitSt ? h("div", { "data-tab-page": "dirty", hidden: defaultTab !== "dirty" }, dirtySectionEl) : null,
+        h("div", { "data-tab-page": "mentioned", hidden: defaultTab !== "mentioned" }, mentionedSectionEl)
       );
 
+      // 顺序即层级：我在哪（锚点）→ 我该看哪（tab）→ 内容 → 我要做什么（快捷操作）
       return [
         headerEl,
         networkAlertBannerEl,
-        repoNoticeBarEl,
         upgradeBannerEl,
         authGuideEl,
         headerCardsVisible ? repoCardEl : null,
-        headerCardsVisible ? actionsBarEl : null,
         tabbedContentEl,
+        headerCardsVisible && repo ? actionsBarEl : null,
       ].filter(Boolean);
     }
 
@@ -1306,38 +1565,11 @@ window.__ModuleLoader__.load({
             if (isFail) {
               setSyncStatus("failed");
               setError(failReason);
-              // 失败响应也可能携带「本次新鲜解析」的仓库身份与认证态（后端在
-              // 回退旧快照时已用新鲜 repo 覆盖旧值）。身份字段永远采纳，
-              // 业务列表才走「非空才覆盖」的防冲刷策略。
-              //
-              // 为什么必须拆开：旧逻辑把「要不要整体替换」和「列表是否有内容」
-              // 绑在一起，于是仓库身份修正会被空列表连坐否决——用户换了 remote
-              // 之后面板永远显示旧仓库，刷新也救不回来。
               var curData = dataRef.current;
-              if (curData) {
-                var hasFreshList = (json.data.pullRequests?.length > 0 || json.data.issues?.length > 0);
-                setData(function (prev: any) {
-                  if (!prev) return json.data;
-                  var merged = {
-                    ...prev,
-                    // 身份 / 认证 / 通知：始终采纳最新（这些字段不可能是「空数据假象」）
-                    repo: json.data.repo || prev.repo,
-                    auth: json.data.auth || prev.auth,
-                    notices: json.data.notices,
-                    updateInfo: json.data.updateInfo || prev.updateInfo,
-                    lastUpdated: json.data.lastUpdated || prev.lastUpdated,
-                  };
-                  // 业务列表：仅有新内容时才替换，防止把「好数据」冲刷成空数组
-                  if (hasFreshList) {
-                    merged.pullRequests = json.data.pullRequests;
-                    merged.issues = json.data.issues;
-                    merged.issueStats = json.data.issueStats;
-                  }
-                  if (json.data.runs?.length > 0) {
-                    merged.runs = json.data.runs;
-                  }
-                  return merged;
-                });
+              if (curData && (curData.pullRequests?.length > 0 || curData.issues?.length > 0 || curData.runs?.length > 0)) {
+                if (json.data.pullRequests?.length > 0 || json.data.issues?.length > 0) {
+                  setData(json.data);
+                }
               } else {
                 setData(json.data);
               }
@@ -1346,8 +1578,6 @@ window.__ModuleLoader__.load({
               }
             } else {
               setData(json.data);
-              // 落快照前统一判定：带离线标记的数据不写（saveStoredRightbarData 内部还有一道），
-              // 且身份变更后的快照会覆盖旧键——localStorage 的 key 是 cwd，天然随路径对齐。
               saveStoredRightbarData(cwd, json.data);
               var syncTs = json.fromCache && json.data.lastUpdated
                 ? (Date.parse(json.data.lastUpdated) || Date.now())
@@ -1528,9 +1758,15 @@ window.__ModuleLoader__.load({
       var [rightbarModalSection, setRightbarModalSection] = React.useState("sync");
       var [helpModalOpen, setHelpModalOpen] = React.useState(false);
       var [selectedCommit, setSelectedCommit] = React.useState(null as any);
+      var [reviewPrNumber, setReviewPrNumber] = React.useState(null as number | null);
       var [extraCommits, setExtraCommits] = React.useState([] as any[]);
       var [loadingMore, setLoadingMore] = React.useState(false);
       var [hasMoreCommits, setHasMoreCommits] = React.useState(true);
+
+      React.useEffect(function () {
+        loadMentioned({ append: false });
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+      }, [sessionId, cwd, lastSyncedAt]);
 
       var [visibleDirtyCount, setVisibleDirtyCount] = React.useState(15);
       var [extraDirtyFiles, setExtraDirtyFiles] = React.useState([] as any[]);
@@ -1538,6 +1774,35 @@ window.__ModuleLoader__.load({
       var [hasMoreDirty, setHasMoreDirty] = React.useState(true);
       var [activeDiffFile, setActiveDiffFile] = React.useState(null as any);
       var [headerCardsVisible, setHeaderCardsVisible] = React.useState(() => getStoredHeaderCardsVisible());
+      // 对话中出现过的 PR：独立于 overview 拉取（数据源是会话转写，不是 GitHub）
+      var [mentioned, setMentioned] = React.useState({ items: [], total: 0, filter: "all", loading: false } as any);
+      var loadMentioned = React.useCallback(function (opts?: { append?: boolean }) {
+        if (!sessionId) { setMentioned({ items: [], total: 0, filter: "all", loading: false }); return; }
+        setMentioned(function (prev: any) { return Object.assign({}, prev, { loading: true }); });
+        var offset = opts && opts.append ? (mentioned.items || []).length : 0;
+        var qs = "/api/github/session-prs?sessionId=" + encodeURIComponent(sessionId)
+          + "&limit=12&offset=" + offset
+          + (cwd ? "&cwd=" + encodeURIComponent(cwd) : "");
+        fetch(qs)
+          .then(function (r) { return r.json(); })
+          .then(function (json: any) {
+            var payload = json && json.ok && json.data ? json.data : null;
+            setMentioned(function (prev: any) {
+              var nextItems = payload && Array.isArray(payload.items)
+                ? (opts && opts.append ? (prev.items || []).concat(payload.items) : payload.items)
+                : (opts && opts.append ? prev.items : []);
+              return {
+                items: nextItems,
+                total: payload ? payload.total || 0 : 0,
+                filter: prev.filter || "all",
+                loading: false,
+              };
+            });
+          })
+          .catch(function () {
+            setMentioned(function (prev: any) { return Object.assign({}, prev, { loading: false }); });
+          });
+      }, [sessionId, cwd, mentioned.items.length]);
 
       var toggleHeaderCards = React.useCallback(() => {
         setHeaderCardsVisible(function (prev: boolean) {
@@ -1795,11 +2060,11 @@ window.__ModuleLoader__.load({
 
       return h(
         "div",
-        { className: "dsh-github-rightbar-container", ref: containerRef },
+        { className: "dsh-github-rightbar-container gh2-theme", ref: containerRef },
         toastEl,
         ...renderGithubRepoView(
           h,
-          data,
+          data ? Object.assign({}, data, { mentioned: mentioned, onMentionedFilter: (f: string) => setMentioned((prev: any) => Object.assign({}, prev, { filter: f })), onMentionedMore: () => loadMentioned({ append: true }) }) : data,
           loading,
           error,
           () => loadData(true),
@@ -1831,7 +2096,8 @@ window.__ModuleLoader__.load({
           () => setActiveDiffFile(null),
           openFileInDsh,
           headerCardsVisible,
-          toggleHeaderCards
+          toggleHeaderCards,
+          (n: number) => setReviewPrNumber(n)
         ),
         h(GlobalSyncSettingsModal, {
           isOpen: aboutModalOpen,
@@ -1863,7 +2129,15 @@ window.__ModuleLoader__.load({
               onClose: function () { setSelectedCommit(null); },
               cwd: cwd,
             })
-          : null
+          : null,
+        h(PrReviewModal, {
+          isOpen: reviewPrNumber !== null,
+          prNumber: reviewPrNumber,
+          cwd: cwd,
+          onClose: function () { setReviewPrNumber(null); },
+          onRefresh: function () { loadData(true); },
+          showToast: showToast,
+        })
       );
     }
 
@@ -1883,24 +2157,9 @@ window.__ModuleLoader__.load({
       return renderOctocatBadge(32);
     }
 
-    // 4. 左侧栏全局入口与中央大面板
-    function GithubSidebarIcon(props: any) {
-      const active = Boolean(props && props.active);
-      return React.createElement(
-        "div",
-        {
-          className: "dsh-github-icon" + (active ? " active" : ""),
-          title: "GitHub 全景驾驶舱（dsh-github-flow 插件）",
-        },
-        React.createElement(
-          "div",
-          {
-            className: "dsh-github-icon-inner" + (active ? " active" : "")
-          },
-          renderOctocat(18, "currentColor")
-        )
-      );
-    }
+    // 4. 左侧栏的全局入口已移除（2026-10 改造）：入口改为会话 PR 浮窗 + 右列面板，
+    //    全局驾驶舱整体下线。这里保留注释是为了让下一次读到「为什么没有 panellist」
+    //    的人知道那是主动删除，而不是漏注册。
 
     var inject = ["slots", "sidebarRightTabs", "sessions", "layout", "theme", "sidebarRight"];
 
@@ -1917,15 +2176,24 @@ window.__ModuleLoader__.load({
 
       if (ctx.effect) {
         ctx.effect(() => injectStyles(), "github: styles");
+        ctx.effect(() => injectSessionPrStyles(), "github: session pr styles");
+        ctx.effect(() => () => stopSessionPrPollingExport(), "github: session pr polling");
+        ctx.effect(() => watchSessionPrVisibility(), "github: session pr visibility");
+        ctx.effect(() => () => resetSessionPrModuleState(), "github: session pr teardown");
       } else {
         injectStyles();
+        injectSessionPrStyles();
       }
 
       if (ctx.on) {
         ctx.on("theme/change", () => {
           injectStyles();
+          injectSessionPrStyles();
         });
       }
+
+      // 链接优先落到 DSH 内部浏览器标签（副作用可重复安装：同一函数引用只登记一次）
+      installSmartLinkHandler();
 
       if (ctx.sidebarRightTabs && typeof ctx.sidebarRightTabs.register === "function") {
         ctx.effect(() => {
@@ -1946,6 +2214,18 @@ window.__ModuleLoader__.load({
             ],
           });
         }, "github: sidebar right tab definition");
+
+        // 会话 PR 面板：与「仓库面板」并列的第二种 tab 类型。
+        // 它只服务浮窗里点进来的那一条 PR，不带仓库级仪表盘。
+        ctx.effect(() => {
+          return ctx.sidebarRightTabs.register({
+            id: "github-pr",
+            kind: "github-pr",
+            priority: "plugin",
+            title: () => "PR",
+            guide: [],
+          });
+        }, "github: session pr tab definition");
       }
 
       if (ctx.slots) {
@@ -1963,20 +2243,28 @@ window.__ModuleLoader__.load({
           }, GithubRightbarTitle);
         });
 
-        ctx.slots.inject("sidebar.panellist", () => {
+        // ---- 会话 PR：浮窗 + 右列面板（本次改造的全部前端入口） ----
+        ctx.slots.inject("shell.overlay", () => {
           return ctx.slots.register({
-            name: "sidebar.panellist",
-            id: "github",
-            order: 20,
-            label: "GitHub",
-          }, GithubSidebarIcon);
+            name: "shell.overlay",
+            id: "github-session-pr",
+            order: 70,
+            label: "本会话 PR",
+          }, (props: any) => React.createElement(SessionPrOverlay, Object.assign({}, props, { onOpenPr: openSessionPrTab })));
         });
 
-        ctx.slots.inject("main", () => {
+        ctx.slots.inject("sidebar.right.pane.tab", () => {
           return ctx.slots.register({
-            name: "main",
-            key: "github",
-          }, GithubWorkspacePanel);
+            name: "sidebar.right.pane.tab",
+            key: "github-pr",
+          }, (props: any) => React.createElement(SessionPrPanel, Object.assign({}, props, { onOpenUrl: openUrlSmartOrFallback })));
+        });
+
+        ctx.slots.inject("sidebar.right.pane.tab.title", () => {
+          return ctx.slots.register({
+            name: "sidebar.right.pane.tab.title",
+            key: "github-pr",
+          }, SessionPrTabTitle);
         });
       }
     }

@@ -351,7 +351,7 @@ export function GithubWorkspacePanel() {
   );
 
   if (loading && !data) {
-    return h("div", { className: "dsh-github-panel", ref: panelRef }, headerEl, h("div", { className: "dsh-github-empty" }, "正在加载全局 GitHub 账号与工作区数据..."));
+    return h("div", { className: "dsh-github-panel gh2-theme", ref: panelRef }, headerEl, h("div", { className: "dsh-github-empty" }, "正在加载全局 GitHub 账号与工作区数据..."));
   }
 
   var effectiveUpdateInfo = updateInfo || data?.updateInfo;
@@ -380,7 +380,7 @@ export function GithubWorkspacePanel() {
   if (!data && error) {
     return h(
       "div",
-      { className: "dsh-github-panel", ref: panelRef },
+      { className: "dsh-github-panel gh2-theme", ref: panelRef },
       headerEl,
       upgradeBannerEl,
       h(
@@ -746,7 +746,7 @@ export function GithubWorkspacePanel() {
 
   return h(
     "div",
-    { className: "dsh-github-panel", ref: panelRef },
+    { className: "dsh-github-panel gh2-theme", ref: panelRef },
     toastEl,
     headerEl,
     networkAlertBannerEl,

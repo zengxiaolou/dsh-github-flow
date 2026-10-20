@@ -2,6 +2,23 @@
  * 面板公共工具函数（纯函数，可被单元测试直接覆盖）
  */
 export declare function formatRelativeTime(iso: any): string;
+/** 运行徽章的色调（对应 styles.ts 的 dsh-badge-* 类） */
+export type RunBadgeTone = "green" | "red" | "yellow" | "blue" | "gray";
+export interface RunBadge {
+    label: string;
+    tone: RunBadgeTone;
+}
+/**
+ * 把 Actions 运行的 conclusion/status 映射成徽章文案。
+ *
+ * 为什么必须枚举完整：GitHub 的 conclusion 远不止 success/failure，
+ * cancelled / skipped / timed_out / action_required / neutral / stale 都是合法值。
+ * 原实现只认前两个，其余一律回退显示 status —— 于是一条「已取消」的运行会显示成
+ * 黄色的 `completed`（status 字段），既误导又像 bug。
+ *
+ * 优先级：conclusion 有值就按 conclusion 判（终态）；否则看 status（运行中/排队中）。
+ */
+export declare function runConclusionBadge(conclusion: any, status: any): RunBadge;
 export declare function rollupCiStatus(checks: any): "pass" | "fail" | "pending" | null;
 export declare function reviewDecisionBadge(decision: any): {
     text: string;

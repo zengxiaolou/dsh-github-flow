@@ -46,6 +46,17 @@ function bundleClient() {
     process.exit(1);
   }
 
+  // 防复发闸门：ui/ 下的模块如果没登记进下面的显式列表，就不会被打进 bundle，
+  // 而调用处只会得到 undefined —— 运行期表现为「面板一片空白」，非常难查。
+  // 所以在这里静态清点一次，构建时就吼出来。
+  const knownModules = new Set([
+    'styles.js', 'utils.js', 'icons.js', 'storage.js', 'branch-selector.js',
+    'auth-guide-card.js', 'upgrade-card.js', 'network-banner.js', 'sync-status-badge.js',
+    'commit-modal.js', 'pr-review-modal.js', 'sync-settings-modal.js', 'help-modal.js',
+    'session-pr-panel.js',
+    'workspace-panel.js', 'tw.generated.js',
+  ]);
+
   const uiDir = path.resolve(__dirname, '../lib/ui');
   if (!fs.existsSync(uiDir)) {
     let content = fs.readFileSync(clientPath, 'utf8');
@@ -54,8 +65,24 @@ function bundleClient() {
     return;
   }
 
+  try {
+    const missing = fs.readdirSync(uiDir)
+      .filter((name) => name.endsWith('.js') && !knownModules.has(name));
+    if (missing.length > 0) {
+      // 直接失败而不是警告：这种漏登记在运行期只会表现为「面板一片空白」，
+      // 排查成本极高（2026-10-20 实际踩过：PrReviewModal 未登记 → 整个右侧栏白屏）。
+      console.error('[build] ❌ 以下 ui 模块未登记进 bundle 清单，调用处会拿到 undefined:', missing.join(', '));
+      console.error('[build]    请在 scripts/build.mjs 的 leadingModules / trailingModules 中登记它们。');
+      process.exit(1);
+    }
+  } catch (err) {
+    console.warn('[build] ⚠️ 无法清点 ui 目录:', err?.message || err);
+  }
+
   // 1. 前置子模块
   const leadingModules = [
+    // 必须在 styles.js 之前：styles 里会拼 `+ TW_CSS`
+    'tw.generated.js',
     'styles.js',
     'utils.js',
     'icons.js',
@@ -66,6 +93,8 @@ function bundleClient() {
     'network-banner.js',
     'sync-status-badge.js',
     'commit-modal.js',
+    'pr-review-modal.js',
+    'session-pr-panel.js',
     'sync-settings-modal.js',
     'help-modal.js',
   ];
@@ -87,7 +116,8 @@ function bundleClient() {
 
   // 2. 后置子模块（保证 GithubRightbarBody 在前，GithubWorkspacePanel 在后）
   let trailingCode = '';
-  const trailingModules = ['workspace-panel.js'];
+  // 全景驾驶舱已下线：workspace-panel.js 不再进 bundle（文件保留，回滚时改回这一行即可）
+  const trailingModules = [];
   for (const mod of trailingModules) {
     const modPath = path.join(uiDir, mod);
     if (fs.existsSync(modPath)) {
@@ -127,7 +157,11 @@ function bundleClient() {
     process.exit(1);
   }
 
-  fs.writeFileSync(clientPath, mainContent, 'utf8');
+  // 原子写：直接 writeFileSync 会有一瞬间「文件被截断」的窗口，而宿主在 watch 这个文件、
+  // 浏览器也在 HMR 期间读它——读到半截就会整段解析失败，插件从页面上整个消失（实测踩过）。
+  const tmpPath = clientPath + '.tmp-' + process.pid;
+  fs.writeFileSync(tmpPath, mainContent, 'utf8');
+  fs.renameSync(tmpPath, clientPath);
   console.log('[build] ✅ 已成功聚合前端子模块并完成 CSS 压缩瘦身');
 }
 

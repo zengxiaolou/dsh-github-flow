@@ -2,6 +2,7 @@ import type { GhExecutor } from '../executor.js';
 import { compareGhVersions } from '../executor.js';
 import { renderPrMarkdown } from '../renderers/markdown.js';
 import { extractImageUrls, downloadImages, buildImageBlocks, filterRequestedUrls, validateAttachPaths } from './image-utils.js';
+import { recordCreatedPr } from '../session-pr-tracker.js';
 
 function normalizeOutput(data: any): Record<string, any> {
   if (data && typeof data === 'object' && !Array.isArray(data)) {
@@ -303,9 +304,15 @@ export function createPrTool(executor: GhExecutor) {
           await appendAttachFlags(createCmd, args.attach_images);
           const res = await executor.run(createCmd, runOpts);
           if (!res.ok) throw new Error(res.error);
-          return dryRun
-            ? { message: 'PR 预演完成（未真正创建）', detail: res.rawOutput }
-            : { message: 'PR 创建成功', url: res.rawOutput };
+          if (dryRun) return { message: 'PR 预演完成（未真正创建）', detail: res.rawOutput };
+          // 会话 PR 浮窗的即时数据源：创建成功就地登记，不等转写落盘。
+          // 登记失败（链接解析不出来）不影响工具结果——浮窗另有转写回填兜底。
+          try {
+            if (sessionId) recordCreatedPr(sessionId, String(res.rawOutput || ''), 'tool');
+          } catch {
+            /* 派生缓存失败不改变工具语义 */
+          }
+          return { message: 'PR 创建成功', url: res.rawOutput };
         }
 
         case 'review': {

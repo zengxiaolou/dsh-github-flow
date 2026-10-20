@@ -9,8 +9,8 @@
 </p>
 
 <p align="center">
-  <b>Give DeepSeek Harness Agents native hands and feet to operate GitHub, crafting an immersive collaboration cockpit for developers.</b><br>
-  Natively reuses host <code>gh</code> CLI login credentials to eliminate Personal Access Token (PAT) leaks; deeply bridges local Git workspaces with remote GitHub collaboration, equipped with <b>18 core domain Agent tools (104 actions covering PR review/Issue tracking/Actions workflow & cache governance/clone-free file reads/branch ruleset policy diagnosis/Gist snippets/labels & global status dashboards/secrets & variables/agent tasks/discussions/projects v2/codespaces/runtime telemetry)</b>, <b>human slash commands</b>, <b>Web UI visual cockpits</b>, and <b>cross-platform one-click seamless upgrades</b>.
+  <b>Give DeepSeek Harness Agents native hands and feet to operate GitHub, delivering a native GitHub workflow inside DSH for developers.</b><br>
+  Natively reuses host <code>gh</code> CLI login credentials to eliminate Personal Access Token (PAT) leaks; deeply bridges local Git workspaces with remote GitHub collaboration, equipped with <b>18 core domain Agent tools (104 actions covering PR review/Issue tracking/Actions workflow & cache governance/clone-free file reads/branch ruleset policy diagnosis/Gist snippets/labels & global status dashboards/secrets & variables/agent tasks/discussions/projects v2/codespaces/runtime telemetry)</b>, <b>human slash commands</b>, <b>Web UI session PR pill &amp; right-sidebar workspace</b>, and <b>cross-platform one-click seamless upgrades</b>.
 </p>
 
 <p align="center">
@@ -28,9 +28,9 @@ When using AI Agents for collaborative coding, developers frequently hit these f
 | **Agent PRs & Code Review** | Manually push branch in browser, click through GitHub web pages to open PRs, breaking autonomous loops. | **Autonomous PRs & Reviews**: Just tell the Agent *"Create a PR for this branch"*; Agent calls `github_pr` to publish and review diffs automatically. |
 | **CI / Actions Failure Debugging** | Sifting through pages of Actions logs in a browser, copying stack traces to chat for debugging. | **Pinpoint Error Extraction**: Tell the Agent *"Why did CI fail?"*; Agent calls `github_run(log_failed)` to grab failed step logs and patch code instantly. |
 | **Security & Token Management** | Pasting plain-text Personal Access Tokens (PATs) in plugin configs, risking token leaks and permission sprawl. | **Zero Token Exposure**: Directly reuses local `gh auth login` credentials via native OS Keychains/Keyrings securely. |
-| **Context Switching Overhead** | Jumping back and forth between VS Code, browser GitHub tabs, and DSH chat windows. | **Immersive Dual Cockpit**: Live PR status, Actions pipelines, and 3D issue matrices right inside DSH. |
+| **Context Switching Overhead** | Jumping back and forth between VS Code, browser GitHub tabs, and DSH chat windows. | **Right-Sidebar GitHub Workspace + Session PR Pill**: repo PR gates, Actions pipelines and assigned issues in one panel; the PR you just opened stays pinned bottom-right. |
 | **Branch Switching & Real-Time Sync** | Switching branches requires hopping into a terminal, while the sidebar remains stale regarding local stage/commit changes. | **Safe In-UI Branch Switching + Live Git Watch**: Instant keyword filter with uncommitted dirty change guard; 800ms debounced `.git` watcher aligns right sidebar in milliseconds. |
-| **First-Screen Latency & Loading** | Staring at full-screen spinners for 8~15s while waiting for heavy background `gh` processes. | **SWR 0ms Instant Render + Scheduled Sync**: Instantly displays local persistent snapshots; features a 3-way mutually exclusive sync model (SWR, Cloud Auto-Sync with visibility pause, Manual) and standalone local Git watch. |
+| **First-Screen Latency & Loading** | Jumping to the browser to check the PR you just opened, while panels spend seconds waiting on network calls and subprocesses. | **Session PR Pill + SWR 0ms Instant Render**: the pill appears bottom-right the moment a PR is created and opens a per-file diff; the right sidebar renders its local snapshot instantly, with a 3-way mutually exclusive sync model (SWR, Cloud Auto-Sync with visibility pause, Manual). |
 | **Plugin Upgrades & Maintenance** | Manually checking npm registry versions, complicated commands, fear of breaking configs. | **Idle Silent Detection + One-Click Upgrade**: Dual-registry acceleration, auto macOS/Windows adaptation, upgrade with one click. |
 
 ---
@@ -299,7 +299,7 @@ Consolidates scattered GitHub endpoints into **18 core domain tools (104 actions
 > - *"Audit the runtime health score and degradation rate report of our GitHub tools."*
 
 * **Supported Actions**:
-  * `view`: **Account-level global status cockpit** (default), aggregating Assigned Issues, Assigned PRs, Review Requests, Mentions, and Repository Activity across all subscribed repositories without needing repository context; supports `-o` org filtering and `-e` noise repository exclusion;
+  * `view`: **Account-level global status dashboard** (default), aggregating Assigned Issues, Assigned PRs, Review Requests, Mentions, and Repository Activity across all subscribed repositories without needing repository context; supports `-o` org filtering and `-e` noise repository exclusion;
   * `health`: 🆕 **Toolchain Runtime Health & Degradation Audit Report**: Powered by Cordis `tools/result` event telemetry, audits total calls, success rates, comprehensive health score (0-100), API degradation rates, and actionable self-healing upgrade suggestions across all 18 tools.
 
 ---
@@ -367,25 +367,26 @@ Consolidates scattered GitHub endpoints into **18 core domain tools (104 actions
 
 ---
 
-## 🖥️ Web UI Cockpit & Right Sidebar Workspace Panel
+## 🖥️ Web UI: Session PR Channel & Right-Sidebar Workspace
 
 `dsh-github-flow` delivers native visual controls alongside its Agent toolset:
 
-### 1. Global Cockpit (Main Dashboard)
-Click the **Octocat icon** in DSH's left navigation bar to open the full-screen cockpit:
-* **⚡ 0ms Instant Render (SWR Persistent Cache)**: Powered by local snapshot persistence; enjoy instant dashboard loading;
-* **📦 Live Freshness Status Pill**: Transparently communicates data freshness right next to the title (`[📦 Local Snapshot (21m ago)]` ➔ `[⏳ Syncing in background...]` ➔ `[✅ Up to date (15:30)]` ➔ `[⚠️ Network failed, offline snapshot displayed]`);
-* **Account-Wide Overview**: Live view of all cloud repositories, default branches, and star counts;
-* **Local Workspace Matrix**: Automatically detects open projects and bridges local directories with remote repos;
-* **3D Issue Governance Matrix**: Categorizes issues into *"📥 User Reported"*, *"🎯 Assigned to Me"*, and *"✍️ Created by Me"* with responsive pill filters;
-* **Update Notification Banner**: Smoothly glides down when an update is available with one-click automated upgrade.
+### 1. Session PR Channel (Pill + Right-Panel PR View)
 
-<p align="center">
-  <img src="./docs/images/1.png" alt="GitHub Global Cockpit" width="100%" />
-</p>
+No more switching to the browser after opening a PR. **A pill appears bottom-right only when the current session has created at least one PR** (`fixed; right: 20px; bottom: 148px`, `z-index: 900`); in a session that never opened a PR it does not exist at all, so it never becomes ambient noise.
+
+* **Pill**: shows `PR #<newest>` plus a total count badge (only when >1); clicking it expands a 340px card upward;
+* **Card**: at most 12 rows, **two lines each** — line 1 is `#number` + title (full width) + state badge, line 2 is the `target-branch tag` + repo + CI dot (green passed / red failed / amber running / grey no checks); additions/deletions stay off the card (they would steal title width — open the panel to see them), with refresh and collapse in the header;
+* **Open**: clicking a row opens the `PR` panel in the right sidebar — **two columns**, main content on the left, review/actions on the right:
+  * header: state badge, repo `#number`, open-on-GitHub / push-to-composer / refresh; title, author, time, `head → [target branch]`, additions/deletions, file count, CI summary;
+  * **target-branch colors**: `→ main` violet, `→ release/*` amber, `→ test` cyan, `→ dev*` blue, everything else grey — the floating rows and the panel header share one palette, so you can tell where a PR is heading at a glance;
+  * left column, three cards: `Description` (long bodies fold behind "show all") → `Changes` (file list first; the diff is only fetched after you click "Load diff", then folds per file) → `Discussion` (latest 3 + commits);
+  * right column, three cards: `Checks` (failing checks highlighted in red, with a summary line), `Reviews` (each reviewer's latest verdict), `Actions` (comment box + `Approve` / `Request changes` / `Post PR comment` / `Push to composer`);
+  * loading is lazy: no diff request until asked, per-card skeletons, header renders first (a large PR's `gh pr diff` can take 30s or hit GitHub's 406 limit and used to freeze the whole panel).
+There is exactly one criterion: **created by this session** — `github_pr` with `create`, `bash` running `gh pr create`, or `github_api` POSTing to `/pulls`. Mentioned, viewed, reviewed or merged PRs do not count (those still come from the legacy `/api/github/session-prs` endpoint used by the workspace panel). **A full DSH restart is required after upgrading**: the client bundle hot-reloads, but the Host plugin does not, so the new `/api/github/session-created-prs` route only exists after a restart. See the [session PR channel design document](./docs/session-pr-channel.md) for the route contract, both data sources and known limits.
 
 ### 2. Session Right Sidebar Panel (Workspace Drawer)
-Located in the right drawer of every chat workspace, seamlessly bridging your local Git workspace with remote GitHub repositories:
+Located in the right drawer of every chat workspace (the right sidebar's "GitHub" tab), seamlessly bridging your local Git workspace with remote GitHub repositories:
 * **Context Auto-Binding**: Automatically locks onto the active Git repository of the current session;
 * **Branch Viewing & Safe In-UI Switching (Branch Selector)**:
   * Visual branch dropdown directly inside the repository card;
@@ -405,14 +406,14 @@ Located in the right drawer of every chat workspace, seamlessly bridging your lo
   * **Pull Requests (`🔀 PR (N)`)**: Open PR inspection with 3-state CI check rollup (`✅ CI Passed` / `❌ CI Failed` / `⏳ CI Pending`), merge conflict detection, review decisions (`✔ Approved` / `✋ Changes Requested` / `👀 Review Required`), Draft pills, and humanized relative timestamps;
   * **Workspace Issues (`📋 Issues (N)`)**: Direct issue task review with assignees, labels, and category pills;
   * **Actions Pipeline (`⚡ Actions (N)`)**: Real-time CI workflow status tracking with trigger event badges (`push`/`schedule`/`manual`/`PR`), relative time, and self-healing diagnostic notes for failed runs (embedding `run_id` for Agent one-click log inspection);
-* **⚙️ Full Settings Access**: Dedicated settings button reusing the same settings modal as the cockpit (all four sections: Sync / Proxy / Update Source / About) — no need to switch back to the main page.
+* **⚙️ Full Settings Access**: `⚙️` button in the panel header (next to `❓` guide and `🔄` refresh) opens the same sectioned settings modal (all four sections: Sync / Proxy / Update Source / About) — no need to leave the current session.
 
 <p align="center">
   <img src="./docs/images/2.png" alt="Session Right Sidebar Panel" width="100%" />
 </p>
 
 ### 3. Settings Center (Settings Modal)
-Click **`[⚙️ Settings]`** in the top right of the Cockpit (or the ⚙️ button in the right sidebar) to open the sectioned settings modal:
+Click the **`⚙️`** button in the header of the workspace panel (the right sidebar's GitHub tab) to open the sectioned settings modal:
 
 **🔄 Data Sync Section** — tune data fetching rhythm and perception sensitivity:
 * **Three Mutually Exclusive Data Refresh Strategies**:
@@ -420,11 +421,11 @@ Click **`[⚙️ Settings]`** in the top right of the Cockpit (or the ⚙️ but
   * **☁️ Cloud Scheduled Auto-Sync (SWR + Polling)**: Instantly renders local cache and syncs once on mount, then counts down cyclically (**5/10/30/60 minutes** selectable; features automatic window visibility pause to prevent API quota drain in background tabs);
   * **📋 Manual Only (Energy Saver)**: Browse local cache only; zero background `gh` processes triggered; click `[🔄 Refresh]` whenever you want updates.
 * **Advanced Automation & Status Perception**:
-  * **📁 Local Git Real-Time Watch (Right Sidebar Only, Enabled by Default)**: Monitors `.git/HEAD` and `.git/index` metadata directly; staging, commit, and branch changes synchronize to the sidebar within milliseconds with an 800ms debounce, consuming zero external network quota; omitted from the main cockpit to preserve lightweight performance.
+  * **📁 Local Git Real-Time Watch (Right Sidebar Only, Enabled by Default)**: Monitors `.git/HEAD` and `.git/index` metadata directly; staging, commit, and branch changes synchronize to the sidebar within milliseconds with an 800ms debounce, consuming zero external network quota.
 * **Visual Cache Management**: Real-time snapshot size and timestamp visibility with one-click `[🗑️ Clear Cache]`.
 
 **🌐 Network Proxy Section** — route all plugin traffic through your proxy:
-* **Global Scope**: Once configured, the cockpit, right-sidebar panel, all 9 Agent tool invocations, and one-click upgrades route through the proxy;
+* **Global Scope**: Once configured, the right-sidebar panel, all 18 Agent tool invocations, and one-click upgrades route through the proxy;
 * **Protocol Support**: `http://` / `https://` / `socks5://` / `socks5h://` (`socks5h` delegates DNS resolution to the proxy for stronger pollution resistance);
 * **`[🧪 Test Connectivity]`**: One-click latency probe against the GitHub API through the current proxy;
 * **Instant Effect**: Persisted to `~/.dsh/data/dsh-github-flow/proxy.json` (auto-restored on DSH restart) — no restart, no plugin reload;
@@ -439,7 +440,7 @@ Click **`[⚙️ Settings]`** in the top right of the Cockpit (or the ⚙️ but
 * Current running version, project description, GitHub repository, npm package page, and MIT license;
 * Star card — if the plugin helps your workflow, a Star on the repo powers continued iteration.
 
-> 🏷️ **Plugin Identity Badge**: Panel titles (cockpit & right sidebar) carry a small "Plugin" badge, clearly marking the UI as provided by the third-party plugin `dsh-github-flow` (not a DSH / GitHub official feature). Click the badge to open the About page.
+> 🏷️ **Plugin Identity Badge**: The right sidebar's "GitHub" tab carries a small "Plugin" badge, clearly marking the UI as provided by the third-party plugin `dsh-github-flow` (not a DSH / GitHub official feature). Click the badge to open the About page.
 
 | 🔄 Data Sync Section | 🌐 Network Proxy Section |
 | :---: | :---: |
@@ -467,7 +468,7 @@ Never miss an update! Built-in industrial-grade update management:
 
 ## ⏱️ SWR Instant Render & Sync Rhythm Control
 
-Why did the Global Cockpit take several seconds to load in earlier releases? Because it concurrently executes a dozen `gh` processes scanning multiple repositories and workspaces. This plugin integrates the **Stale-While-Revalidate (SWR)** caching pattern, putting total control back in your hands:
+Why can the right-sidebar panel still take a few seconds? Because one screen of data fans out into several concurrent `gh` subprocesses (repo overview, commits, local changes, PRs/issues/Actions). This plugin integrates the **Stale-While-Revalidate (SWR)** caching pattern, putting total control back in your hands:
 
 ```text
 Initial Mount (0ms) ──────────> Instantly render local persistent snapshot
@@ -485,7 +486,7 @@ Initial Mount (0ms) ──────────> Instantly render local persi
 | **☁️ Cloud Scheduled Auto-Sync (SWR + Polling)** | Instantly renders local cache and revalidates on mount, then starts a recurring timer (5/10/30/60m); features visibility-change pause to prevent background API quota drain. | **Active developers managing multiple repositories, PR workflows, and team issues**. |
 | **📋 Manual Only (Energy Saver)** | Browse local cache only; zero automated background `gh` processes. | **Battery-powered laptops, low-spec hardware, or metered networks**. Zero background waste. |
 
-* **Offline Resilience (Fail-Safe)**: Even when disconnected or hitting network timeouts, **your dashboard preserves the complete snapshot for searching, navigation, and review, paired with prominent offline warning banners and toasts—zero blank screens or crash popups!**
+* **Offline Resilience (Fail-Safe)**: Even when disconnected or hitting network timeouts, **the panel preserves the complete snapshot for searching, navigation, and review, paired with prominent offline warning banners and toasts—zero blank screens or crash popups!**
 
 ---
 

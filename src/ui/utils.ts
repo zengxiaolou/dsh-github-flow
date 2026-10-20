@@ -17,6 +17,50 @@ export function formatRelativeTime(iso: any): string {
   return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
 }
 
+/** 运行徽章的色调（对应 styles.ts 的 dsh-badge-* 类） */
+export type RunBadgeTone = "green" | "red" | "yellow" | "blue" | "gray";
+
+export interface RunBadge {
+  label: string;
+  tone: RunBadgeTone;
+}
+
+/**
+ * 把 Actions 运行的 conclusion/status 映射成徽章文案。
+ *
+ * 为什么必须枚举完整：GitHub 的 conclusion 远不止 success/failure，
+ * cancelled / skipped / timed_out / action_required / neutral / stale 都是合法值。
+ * 原实现只认前两个，其余一律回退显示 status —— 于是一条「已取消」的运行会显示成
+ * 黄色的 `completed`（status 字段），既误导又像 bug。
+ *
+ * 优先级：conclusion 有值就按 conclusion 判（终态）；否则看 status（运行中/排队中）。
+ */
+export function runConclusionBadge(conclusion: any, status: any): RunBadge {
+  var c = String(conclusion || "").toLowerCase();
+  var st = String(status || "").toLowerCase();
+
+  switch (c) {
+    case "success": return { label: "✓ 成功", tone: "green" };
+    case "failure": return { label: "✕ 失败", tone: "red" };
+    case "cancelled": return { label: "⊘ 已取消", tone: "gray" };
+    case "skipped": return { label: "⤼ 已跳过", tone: "gray" };
+    case "timed_out": return { label: "⏱ 超时", tone: "yellow" };
+    case "action_required": return { label: "⚠ 需处理", tone: "yellow" };
+    case "neutral": return { label: "· 中性", tone: "gray" };
+    case "stale": return { label: "· 已过期", tone: "gray" };
+    case "startup_failure": return { label: "✕ 启动失败", tone: "red" };
+  }
+
+  if (st === "in_progress") return { label: "● 运行中", tone: "blue" };
+  if (st === "queued" || st === "pending" || st === "waiting" || st === "requested") {
+    return { label: "◷ 排队中", tone: "yellow" };
+  }
+  if (st === "completed") return { label: "· 已完成", tone: "gray" };
+  if (c) return { label: c, tone: "gray" };
+  if (st) return { label: st, tone: "gray" };
+  return { label: "未知", tone: "gray" };
+}
+
 export function rollupCiStatus(checks: any): "pass" | "fail" | "pending" | null {
   if (!Array.isArray(checks) || checks.length === 0) return null;
   var hasFail = false, hasPending = false;
@@ -49,16 +93,6 @@ export function eventLabel(event: any): string {
   if (e === "pull_request") return "🔀 PR";
   return e || "";
 }
-
-/**
- * 确定性失败的特征（客户端侧兜底判定）。
- *
- * 为什么这里还要再写一份：后端 GhExecutor 已统一分类并通过 errorKind 分流，
- * 但浏览器端拿不到 errorKind，只能看到拼接后的错误文本。这类错误重试一万次
- * 也不会变好（仓库就是关着 Issues），必须阻止阶梯退避把 7 秒白白烧掉。
- * 与服务端共用同一组特征串，改动时两边同步。
- */
-var DETERMINISTIC_HINT_RE = /repository has disabled|Could not resolve to a Repository|Branch not found|HTTP 403|Not Found \(HTTP 404\)|rate limit/i;
 
 export interface FetchRetryConfig {
   maxRetries?: number; // 默认 3 次
@@ -123,10 +157,7 @@ export async function fetchWithRetry(
 
         if (isNetworkError) {
           failureReason = currentJson.error || currentJson.data?.networkErrorReason || "云端接口网络抖动";
-          // 后端已把「确定性失败」（仓库关了 Issues / 仓库不存在 / 无权限）从
-          // networkError 里剥离，只留真正的传输层故障。但历史版本或第三方实现
-          // 仍可能把确定性文本塞进同一条链路，这里再兜一道：命中即放弃重试。
-          shouldRetry = !DETERMINISTIC_HINT_RE.test(String(failureReason));
+          shouldRetry = true;
         } else {
           // 成功获取完整且无网络错误的数据
           return { res: currentRes, json: currentJson };

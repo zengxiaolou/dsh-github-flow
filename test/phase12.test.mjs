@@ -89,7 +89,9 @@ async function runTests() {
       const builtClient = fs.readFileSync(path.join(__dirname, '../lib/client.js'), 'utf8');
       assert(builtClient.includes('getStoredRightbarSnapshot(cwd)'), '应包含按当前 cwd 读取快照逻辑');
       assert(builtClient.includes('setData(snap?.data || null)'), '切换 cwd 时必须立即置换为新工作区数据或 null');
-      assert(builtClient.includes('未检测到关联的 GitHub 仓库'), '客户端必须包含未关联仓库的空状态提示');
+      // 空状态文案后来精简成「未关联 GitHub 仓库」（原「未检测到关联的…」已不存在）。
+      // 断言语义不变：未关联仓库时客户端必须给出一句明确的提示，而不是空白面板。
+      assert(builtClient.includes('未关联 GitHub 仓库'), '客户端必须包含未关联仓库的空状态提示');
     });
 
     test('未绑定仓库时快捷操作栏安全隐藏或保护，不展示无意义外部操作', () => {
@@ -224,14 +226,10 @@ async function runTests() {
     const { TtlCache } = await import('../lib/cache.js');
 
     const fakeCache = new TtlCache(100000);
-    // 注入已有 1 条有效 PR 的缓存。
-    // 仓库身份必须与当前工作区真实身份一致：since v0.5.1 缓存读取前会做一次
-    // 身份失效校验（.git/config 变了就作废脏快照），种一个假 owner 会被直接清掉，
-    // 那是校验在正常工作，不是本用例要验的「网络故障时保全列表」行为。
-    const realIdentity = new GhExecutor().getRepoIdentityFromLocal(process.cwd());
+    // 注入已有 1 条有效 PR 的缓存
     fakeCache.set(process.cwd(), {
       auth: { installed: true, loggedIn: true },
-      repo: realIdentity || { nameWithOwner: 'test/repo', name: 'repo', owner: 'test', defaultBranch: 'main' },
+      repo: { nameWithOwner: 'test/repo', name: 'repo', owner: 'test', defaultBranch: 'main' },
       pullRequests: [{ number: 123, title: 'Existing Important PR' }],
       issues: [],
       runs: [],

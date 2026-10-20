@@ -1,0 +1,2063 @@
+<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8"><style>
+body{margin:0;padding:14px;background:#0f1115;font-family:-apple-system,"PingFang SC",sans-serif;width:392px}
+
+/* 1. 侧边栏图标与外壳 */
+.dsh-github-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  cursor: pointer;
+  color: var(--dsw-alias-label-secondary, #656d76);
+  transition: color 0.15s ease;
+}
+.dsh-github-icon:hover {
+  color: var(--dsw-alias-label-primary, #1f2328);
+}
+.dsh-github-icon-inner {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 7px;
+  background: transparent;
+  color: inherit;
+  border: 1px solid transparent;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.dsh-github-icon-inner.active {
+  background: var(--dsw-alias-bg-module-platform, rgba(9, 105, 218, 0.08));
+  color: var(--dsw-alias-link, #0969da);
+  border-color: var(--dsw-alias-border-l2, rgba(9, 105, 218, 0.2));
+}
+
+body[data-ds-dark-theme] .dsh-github-icon {
+  color: var(--dsw-alias-label-secondary, #9ca3af);
+}
+body[data-ds-dark-theme] .dsh-github-icon:hover {
+  color: var(--dsw-alias-label-primary, #ffffff);
+}
+body[data-ds-dark-theme] .dsh-github-icon-inner.active {
+  background: linear-gradient(135deg, rgba(46, 160, 67, 0.3) 0%, rgba(31, 111, 235, 0.45) 100%);
+  color: #ffffff;
+  box-shadow: 0 0 12px rgba(31, 111, 235, 0.4);
+  border-color: rgba(88, 166, 255, 0.45);
+}
+
+/* 2. Octocat 科技勋章 Badge */
+.dsh-octocat-badge {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(135deg, #1f6feb 0%, #0969da 60%, #8957e5 100%);
+  box-shadow: 0 2px 6px rgba(9, 105, 218, 0.25);
+  flex-shrink: 0;
+}
+body[data-ds-dark-theme] .dsh-octocat-badge {
+  background: linear-gradient(135deg, #2ea043 0%, #1f6feb 60%, #8957e5 100%);
+  box-shadow: 0 2px 8px rgba(31, 111, 235, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.25);
+}
+
+/* 3. 容器视图（主面板与右侧抽屉栏） */
+.dsh-github-panel {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  overflow-y: auto;
+  padding: 24px 32px;
+  box-sizing: border-box;
+  background: var(--dsw-alias-bg-base, #ffffff);
+  color: var(--dsw-alias-label-primary, #1f2328);
+  font-family: var(--dsw-font-family, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif);
+}
+
+.dsh-github-rightbar-container {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  overflow-y: auto;
+  padding: 16px 18px;
+  box-sizing: border-box;
+  background: var(--dsw-alias-bg-base, #ffffff);
+  color: var(--dsw-alias-label-primary, #1f2328);
+  font-family: var(--dsw-font-family, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif);
+}
+
+body[data-ds-dark-theme] .dsh-github-panel,
+body[data-ds-dark-theme] .dsh-github-rightbar-container {
+  background: var(--dsw-alias-bg-base, #151517);
+  color: var(--dsw-alias-label-primary, #ececec);
+}
+
+/* 4. 头部区域 */
+.dsh-github-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 20px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--dsw-alias-border-l2, #e5e7eb);
+}
+body[data-ds-dark-theme] .dsh-github-header {
+  border-bottom-color: var(--dsw-alias-border-l1, #2c2c2e);
+}
+.dsh-github-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.dsh-github-title h2 {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--dsw-alias-label-primary, #1f2328);
+}
+body[data-ds-dark-theme] .dsh-github-title h2 {
+  color: var(--dsw-alias-label-primary, #f0f6fc);
+}
+
+/* 5. 刷新按钮 */
+.dsh-github-refresh-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px;
+  font-size: 12px;
+  font-weight: 500;
+  border-radius: 6px;
+  border: 1px solid var(--dsw-alias-border-l2, #e1e4e8);
+  background: var(--dsw-alias-bg-module-platform, #f6f8fa);
+  color: var(--dsw-alias-label-primary, #1f2328);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.dsh-github-refresh-btn:hover:not(:disabled) {
+  background: var(--dsw-alias-interactive-bg-hover, #ebeef2);
+  border-color: var(--dsw-alias-border-l3, #d0d7de);
+}
+.dsh-github-refresh-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+body[data-ds-dark-theme] .dsh-github-refresh-btn {
+  border-color: var(--dsw-alias-border-l1, #38383c);
+  background: var(--dsw-alias-bg-layer-2, #242528);
+  color: var(--dsw-alias-label-primary, #f0f6fc);
+}
+body[data-ds-dark-theme] .dsh-github-refresh-btn:hover:not(:disabled) {
+  background: var(--dsw-alias-interactive-bg-hover, #2f3034);
+  border-color: rgba(255, 255, 255, 0.25);
+}
+
+/* 6. 概览卡片与网格 */
+.dsh-github-overview-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 14px;
+  margin-bottom: 20px;
+}
+.dsh-github-card {
+  padding: 14px 16px;
+  border-radius: 8px;
+  border: 1px solid var(--dsw-alias-border-l2, #e5e7eb);
+  background: var(--dsw-alias-bg-layer-1, #fcfcfd);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+  margin-bottom: 12px;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+body[data-ds-dark-theme] .dsh-github-card {
+  border-color: var(--dsw-alias-border-l1, #303034);
+  background: var(--dsw-alias-bg-layer-2, #212124);
+  box-shadow: none;
+}
+.dsh-github-card-title {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--dsw-alias-label-tertiary, #656d76);
+  margin-bottom: 6px;
+  font-weight: 500;
+}
+body[data-ds-dark-theme] .dsh-github-card-title {
+  color: var(--dsw-alias-label-tertiary, #888);
+}
+.dsh-github-card-value {
+  font-size: 15px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  color: var(--dsw-alias-label-primary, #1f2328);
+}
+body[data-ds-dark-theme] .dsh-github-card-value {
+  color: var(--dsw-alias-label-primary, #f0f6fc);
+}
+.dsh-github-card-desc {
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--dsw-alias-label-secondary, #656d76);
+  margin-top: 4px;
+  line-height: 1.4;
+}
+body[data-ds-dark-theme] .dsh-github-card-desc {
+  color: var(--dsw-alias-label-secondary, #bbb);
+}
+/*
+ * 对比度：原来用 label-tertiary(#8c959f) 在浅色卡面上只有 2.96:1，低于 WCAG AA 的
+ * 4.5:1（design_audit 实测）。层级不该靠「把字洗淡」实现——改成 secondary，
+ * 弱化交给 11px 字号与小写信息密度。
+ */
+.dsh-github-card-subtext {
+  font-size: 11px;
+  color: var(--dsw-alias-label-secondary, #57606a);
+  margin-top: 8px;
+  line-height: 1.5;
+}
+body[data-ds-dark-theme] .dsh-github-card-subtext {
+  color: var(--dsw-alias-label-secondary, #9ca3af);
+}
+
+/* 7. 徽章（Badges） */
+.dsh-github-badge {
+  display: inline-flex;
+  align-items: center;
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 12px;
+  font-weight: 500;
+  line-height: 16px;
+}
+.dsh-badge-green {
+  background: rgba(46, 160, 67, 0.12);
+  color: #1a7f37;
+  border: 1px solid rgba(46, 160, 67, 0.2);
+}
+.dsh-badge-red {
+  background: rgba(207, 34, 46, 0.12);
+  color: #cf222e;
+  border: 1px solid rgba(207, 34, 46, 0.2);
+}
+.dsh-badge-yellow {
+  background: rgba(154, 103, 0, 0.12);
+  color: #9a6700;
+  border: 1px solid rgba(154, 103, 0, 0.2);
+}
+.dsh-badge-blue {
+  background: rgba(9, 105, 218, 0.12);
+  color: #0969da;
+  border: 1px solid rgba(9, 105, 218, 0.2);
+}
+.dsh-badge-purple {
+  background: rgba(137, 87, 229, 0.12);
+  color: #8250df;
+  border: 1px solid rgba(137, 87, 229, 0.2);
+}
+body[data-ds-dark-theme] .dsh-badge-green {
+  background: rgba(46, 160, 67, 0.22);
+  color: #3fb950;
+  border-color: rgba(46, 160, 67, 0.3);
+}
+body[data-ds-dark-theme] .dsh-badge-red {
+  background: rgba(248, 81, 73, 0.22);
+  color: #f85149;
+  border-color: rgba(248, 81, 73, 0.3);
+}
+body[data-ds-dark-theme] .dsh-badge-yellow {
+  background: rgba(210, 153, 34, 0.22);
+  color: #d29922;
+  border-color: rgba(210, 153, 34, 0.3);
+}
+body[data-ds-dark-theme] .dsh-badge-blue {
+  background: rgba(56, 139, 253, 0.22);
+  color: #58a6ff;
+  border-color: rgba(56, 139, 253, 0.3);
+}
+body[data-ds-dark-theme] .dsh-badge-purple {
+  background: rgba(163, 113, 247, 0.22);
+  color: #bc8cff;
+  border-color: rgba(163, 113, 247, 0.3);
+}
+
+/* 插件身份徽标：标识界面由第三方插件 dsh-github-flow 提供（非 DSH/GitHub 官方） */
+.dsh-github-plugin-badge {
+  display: inline-flex;
+  align-items: center;
+  font-size: 10px;
+  font-weight: 500;
+  padding: 1px 7px;
+  border-radius: 10px;
+  line-height: 14px;
+  vertical-align: middle;
+  margin-left: 8px;
+  text-decoration: none !important;
+  background: rgba(125, 133, 144, 0.12);
+  color: #656d76;
+  border: 1px solid rgba(125, 133, 144, 0.25);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.dsh-github-plugin-badge:hover {
+  background: rgba(125, 133, 144, 0.2);
+  color: var(--dsw-alias-label-primary, #1f2328);
+}
+body[data-ds-dark-theme] .dsh-github-plugin-badge {
+  background: rgba(139, 148, 158, 0.18);
+  color: #8b949e;
+  border-color: rgba(139, 148, 158, 0.3);
+}
+body[data-ds-dark-theme] .dsh-github-plugin-badge:hover {
+  background: rgba(139, 148, 158, 0.28);
+  color: #f0f6fc;
+}
+
+/* 7.5. 分类筛选药丸栏 */
+.dsh-github-pills {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+.dsh-github-pill-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  border-radius: 14px;
+  font-size: 11px;
+  font-weight: 500;
+  border: 1px solid var(--dsw-alias-border-l2, #d0d7de);
+  background: var(--dsw-alias-bg-module-platform, #f6f8fa);
+  color: var(--dsw-alias-label-secondary, #656d76);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.dsh-github-pill-btn:hover {
+  color: var(--dsw-alias-label-primary, #1f2328);
+  border-color: var(--dsw-alias-border-l3, #b0b8c1);
+}
+.dsh-github-pill-btn.active {
+  background: var(--dsw-alias-bg-module-platform, rgba(9, 105, 218, 0.1));
+  color: var(--dsw-alias-link, #0969da);
+  border-color: var(--dsw-alias-link, #0969da);
+  font-weight: 600;
+}
+body[data-ds-dark-theme] .dsh-github-pill-btn {
+  background: var(--dsw-alias-bg-layer-2, #21262d);
+  color: var(--dsw-alias-label-secondary, #8b949e);
+  border-color: var(--dsw-alias-border-l1, #30363d);
+}
+body[data-ds-dark-theme] .dsh-github-pill-btn:hover {
+  color: var(--dsw-alias-label-primary, #f0f6fc);
+  border-color: #8b949e;
+}
+body[data-ds-dark-theme] .dsh-github-pill-btn.active {
+  background: rgba(56, 139, 253, 0.18);
+  color: #58a6ff;
+  border-color: #58a6ff;
+}
+
+/* 8. 快捷操作网格 */
+.dsh-github-quick-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+.dsh-github-action-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 8px 12px;
+  border-radius: 6px;
+  border: 1px solid var(--dsw-alias-border-l2, #e1e4e8);
+  background: var(--dsw-alias-bg-module-platform, #f6f8fa);
+  color: var(--dsw-alias-label-primary, #1f2328);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.dsh-github-action-btn:hover {
+  background: var(--dsw-alias-interactive-bg-hover, #ebeef2);
+  border-color: var(--dsw-alias-link, #0969da);
+  color: var(--dsw-alias-link, #0969da);
+}
+body[data-ds-dark-theme] .dsh-github-action-btn {
+  border-color: var(--dsw-alias-border-l1, #444);
+  background: var(--dsw-alias-bg-layer-2, #28282b);
+  color: var(--dsw-alias-label-primary, #fff);
+}
+body[data-ds-dark-theme] .dsh-github-action-btn:hover {
+  background: var(--dsw-alias-interactive-bg-hover, #343438);
+  border-color: #58a6ff;
+  color: #58a6ff;
+}
+
+/* 组合式快捷操作按钮 (AI 智能装填主操作 + 官方外链直达) */
+.dsh-github-split-btn {
+  display: flex;
+  align-items: stretch;
+  border-radius: 6px;
+  border: 1px solid var(--dsw-alias-border-l2, #e1e4e8);
+  background: var(--dsw-alias-bg-module-platform, #f6f8fa);
+  overflow: hidden;
+  transition: all 0.15s ease;
+}
+.dsh-github-split-btn:hover {
+  border-color: var(--dsw-alias-link, #0969da);
+}
+body[data-ds-dark-theme] .dsh-github-split-btn {
+  border-color: var(--dsw-alias-border-l1, #444);
+  background: var(--dsw-alias-bg-layer-2, #28282b);
+}
+body[data-ds-dark-theme] .dsh-github-split-btn:hover {
+  border-color: #58a6ff;
+}
+.dsh-github-split-main {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  padding: 8px 8px;
+  border: 0;
+  background: transparent;
+  color: var(--dsw-alias-label-primary, #1f2328);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  white-space: nowrap;
+}
+.dsh-github-split-main:hover {
+  background: var(--dsw-alias-interactive-bg-hover, #ebeef2);
+  color: var(--dsw-alias-link, #0969da);
+}
+body[data-ds-dark-theme] .dsh-github-split-main {
+  color: var(--dsw-alias-label-primary, #fff);
+}
+body[data-ds-dark-theme] .dsh-github-split-main:hover {
+  background: var(--dsw-alias-interactive-bg-hover, #343438);
+  color: #58a6ff;
+}
+.dsh-github-split-link {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 8px;
+  border-left: 1px solid var(--dsw-alias-border-l2, #e1e4e8);
+  background: transparent;
+  color: var(--dsw-alias-label-tertiary, #656d76);
+  font-size: 12px;
+  font-weight: bold;
+  text-decoration: none !important;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.dsh-github-split-link:hover {
+  background: var(--dsw-alias-interactive-bg-hover, #ebeef2);
+  color: var(--dsw-alias-link, #0969da);
+}
+body[data-ds-dark-theme] .dsh-github-split-link {
+  border-left-color: var(--dsw-alias-border-l1, #444);
+  color: var(--dsw-alias-label-secondary, #9ca3af);
+}
+body[data-ds-dark-theme] .dsh-github-split-link:hover {
+  background: var(--dsw-alias-interactive-bg-hover, #343438);
+  color: #58a6ff;
+}
+
+/* 9. 模块分区与列表 */
+.dsh-github-section {
+  margin-bottom: 20px;
+}
+.dsh-github-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+.dsh-github-section-header h3 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--dsw-alias-label-secondary, #656d76);
+}
+body[data-ds-dark-theme] .dsh-github-section-header h3 {
+  color: var(--dsw-alias-label-secondary, #ccc);
+}
+.dsh-github-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.dsh-github-item {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px 16px;
+  border-radius: 6px;
+  border: 1px solid var(--dsw-alias-border-l2, #e5e7eb);
+  background: var(--dsw-alias-bg-layer-1, #fcfcfd);
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+.dsh-github-item:hover {
+  border-color: var(--dsw-alias-border-l3, #d0d7de);
+  background: var(--dsw-alias-interactive-bg-hover, #f6f8fa);
+}
+body[data-ds-dark-theme] .dsh-github-item {
+  border-color: var(--dsw-alias-border-l1, #333336);
+  background: var(--dsw-alias-bg-layer-2, #252528);
+}
+body[data-ds-dark-theme] .dsh-github-item:hover {
+  border-color: var(--dsw-alias-border-l2, #555);
+  background: var(--dsw-alias-interactive-bg-hover, #2c2c30);
+}
+.dsh-github-item-title {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--dsw-alias-label-primary, #1f2328);
+  text-decoration: none;
+  transition: color 0.15s ease;
+}
+.dsh-github-item-title:hover {
+  color: var(--dsw-alias-link, #0969da);
+  text-decoration: underline;
+}
+body[data-ds-dark-theme] .dsh-github-item-title {
+  color: var(--dsw-alias-label-primary, #f0f6fc);
+}
+body[data-ds-dark-theme] .dsh-github-item-title:hover {
+  color: #58a6ff;
+}
+.dsh-github-item-desc {
+  font-size: 12px;
+  color: var(--dsw-alias-label-secondary, #656d76);
+  line-height: 1.4;
+}
+body[data-ds-dark-theme] .dsh-github-item-desc {
+  color: var(--dsw-alias-label-secondary, #bbb);
+}
+.dsh-github-item-meta {
+  font-size: 11px;
+  color: var(--dsw-alias-label-tertiary, #656d76);
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+/*
+ * 长文本不再顶破容器：分支名、事件名、时间都可能很长，
+ * 在宽度有限的右侧栏里必须靠 ellipsis 收口（title 提供完整值）。
+ */
+.dsh-github-item-meta > span {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/*
+ * 第一项通常是分支名，最容易长到把后面的状态徽章挤到下一行。
+ * 给它一个固定上限（而非 100%），让徽章尽量留在同一行——纵向空间在侧栏里最贵。
+ */
+.dsh-github-item-meta > span:first-child {
+  max-width: 62%;
+  flex: 0 1 auto;
+}
+
+/* 卡头右侧的图标按钮（在浏览器打开） */
+.dsh-github-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border-radius: 6px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: inherit;
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+.dsh-github-icon-btn:hover {
+  background: var(--dsw-alias-interactive-bg-hover, #ebeef2);
+  border-color: var(--dsw-alias-border-l2, #e1e4e8);
+}
+body[data-ds-dark-theme] .dsh-github-icon-btn:hover {
+  background: #343438;
+  border-color: #444;
+}
+body[data-ds-dark-theme] .dsh-github-item-meta {
+  color: var(--dsw-alias-label-secondary, #8c8c8c);
+}
+
+/* 10. 小按钮样式（在 GitHub 打开等） */
+.dsh-github-btn-sm {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  font-weight: 500;
+  padding: 4px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--dsw-alias-border-l2, #d0d7de);
+  background: var(--dsw-alias-bg-module-platform, #f6f8fa);
+  color: var(--dsw-alias-label-primary, #1f2328);
+  cursor: pointer;
+  text-decoration: none !important;
+  transition: all 0.15s ease;
+}
+.dsh-github-btn-sm:hover {
+  background: var(--dsw-alias-interactive-bg-hover, #ebeef2);
+  border-color: var(--dsw-alias-border-l3, #b0b8c1);
+  color: var(--dsw-alias-link, #0969da);
+}
+body[data-ds-dark-theme] .dsh-github-btn-sm {
+  border-color: var(--dsw-alias-border-l1, #444);
+  background: var(--dsw-alias-bg-layer-2, #26272b);
+  color: var(--dsw-alias-label-primary, #f0f6fc);
+}
+body[data-ds-dark-theme] .dsh-github-btn-sm:hover {
+  background: var(--dsw-alias-interactive-bg-hover, #33343a);
+  border-color: rgba(255, 255, 255, 0.25);
+  color: #58a6ff;
+}
+
+/* 11. 空状态 */
+.dsh-github-empty {
+  padding: 24px;
+  text-align: center;
+  font-size: 12px;
+  color: var(--dsw-alias-label-tertiary, #656d76);
+  border: 1px dashed var(--dsw-alias-border-l2, #d0d7de);
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.01);
+}
+body[data-ds-dark-theme] .dsh-github-empty {
+  color: var(--dsw-alias-label-tertiary, #888);
+  border-color: var(--dsw-alias-border-l1, #38383c);
+  background: rgba(255, 255, 255, 0.01);
+}
+
+/* 12. Tabs 导航栏 */
+.dsh-github-tabs {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 18px;
+  border-bottom: 1px solid var(--dsw-alias-border-l2, #e5e7eb);
+  padding-bottom: 8px;
+}
+body[data-ds-dark-theme] .dsh-github-tabs {
+  border-bottom-color: var(--dsw-alias-border-l1, #303034);
+}
+.dsh-github-tab-btn {
+  padding: 6px 14px;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 500;
+  border: 0;
+  background: transparent;
+  color: var(--dsw-alias-label-secondary, #656d76);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.dsh-github-tab-btn:hover {
+  color: var(--dsw-alias-label-primary, #1f2328);
+  background: var(--dsw-alias-interactive-bg-hover, rgba(0, 0, 0, 0.05));
+}
+.dsh-github-tab-btn.active {
+  color: var(--dsw-alias-link, #0969da);
+  background: rgba(9, 105, 218, 0.1);
+  font-weight: 600;
+}
+body[data-ds-dark-theme] .dsh-github-tab-btn {
+  color: var(--dsw-alias-label-secondary, #8c8c8c);
+}
+body[data-ds-dark-theme] .dsh-github-tab-btn:hover {
+  color: var(--dsw-alias-label-primary, #fff);
+  background: var(--dsw-alias-interactive-bg-hover, rgba(255, 255, 255, 0.06));
+}
+body[data-ds-dark-theme] .dsh-github-tab-btn.active {
+  color: #58a6ff;
+  background: rgba(88, 166, 255, 0.15);
+}
+
+/* 13. 搜索输入框 */
+.dsh-github-search-input {
+  width: 100%;
+  max-width: 320px;
+  padding: 6px 12px;
+  font-size: 12px;
+  border-radius: 6px;
+  border: 1px solid var(--dsw-alias-border-l2, #d0d7de);
+  background: var(--dsw-alias-bg-base, #ffffff);
+  color: var(--dsw-alias-label-primary, #1f2328);
+  outline: none;
+  margin-bottom: 14px;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.dsh-github-search-input:focus {
+  border-color: var(--dsw-alias-link, #0969da);
+  box-shadow: 0 0 0 3px rgba(9, 105, 218, 0.15);
+}
+body[data-ds-dark-theme] .dsh-github-search-input {
+  border-color: var(--dsw-alias-border-l1, #444);
+  background: var(--dsw-alias-bg-layer-2, #212124);
+  color: var(--dsw-alias-label-primary, #f0f6fc);
+}
+body[data-ds-dark-theme] .dsh-github-search-input:focus {
+  border-color: #58a6ff;
+  box-shadow: 0 0 0 3px rgba(88, 166, 255, 0.2);
+}
+
+/* 14. 工作区矩阵条目专属类 */
+.dsh-github-workspace-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+.dsh-github-ws-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--dsw-alias-label-primary, #1f2328);
+}
+body[data-ds-dark-theme] .dsh-github-ws-title {
+  color: var(--dsw-alias-label-primary, #f0f6fc);
+}
+.dsh-github-ws-path {
+  font-size: 12px;
+  color: var(--dsw-alias-label-tertiary, #656d76);
+  font-family: var(--ds-font-family-code, monospace);
+}
+body[data-ds-dark-theme] .dsh-github-ws-path {
+  color: var(--dsw-alias-label-tertiary, #888);
+}
+.dsh-github-ws-repo-link {
+  color: var(--dsw-alias-link, #0969da);
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-weight: 500;
+}
+body[data-ds-dark-theme] .dsh-github-ws-repo-link {
+  color: #58a6ff;
+}
+.dsh-github-repo-link {
+  color: var(--dsw-alias-link, #0969da);
+  text-decoration: none;
+  font-weight: 700;
+  font-size: 16px;
+  letter-spacing: -0.01em;
+}
+.dsh-github-repo-link:hover {
+  text-decoration: underline;
+}
+body[data-ds-dark-theme] .dsh-github-repo-link {
+  color: #58a6ff;
+}
+
+/* 聚合根：手动切换绑定的仓库（候选 > 1 时才出现） */
+.dsh-github-repo-select {
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.4;
+  max-width: 190px;
+  min-height: 26px;
+  padding: 3px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  color: var(--dsw-alias-label-primary, #1f2328);
+  background: var(--dsw-alias-bg-secondary, #f6f8fa);
+  border: 1px solid var(--dsw-alias-border-tertiary, #d0d7de);
+}
+.dsh-github-repo-select:hover {
+  border-color: var(--dsw-alias-link, #0969da);
+}
+.dsh-github-repo-select:focus {
+  outline: 2px solid var(--dsw-alias-link, #0969da);
+  outline-offset: 1px;
+}
+body[data-ds-dark-theme] .dsh-github-repo-select {
+  color: var(--dsw-alias-label-primary, #f0f6fc);
+  background: #21262d;
+  border-color: #30363d;
+}
+.dsh-github-subheading {
+  font-size: 14px;
+  font-weight: 600;
+  margin: 0 0 10px 0;
+  color: var(--dsw-alias-label-primary, #1f2328);
+}
+body[data-ds-dark-theme] .dsh-github-subheading {
+  color: var(--dsw-alias-label-primary, #f0f6fc);
+}
+
+/* 15. 就绪引导横幅 (Setup Guide Banner) */
+.dsh-github-guide-card {
+  padding: 16px;
+  border-radius: 8px;
+  margin-bottom: 16px;
+  border: 1px solid var(--dsw-alias-border-l2, #d0d7de);
+  background: var(--dsw-alias-bg-layer-1, #f6f8fa);
+}
+.dsh-github-guide-card.warning {
+  border-color: rgba(210, 153, 34, 0.4);
+  background: rgba(210, 153, 34, 0.08);
+}
+.dsh-github-guide-card.danger {
+  border-color: rgba(248, 81, 73, 0.4);
+  background: rgba(248, 81, 73, 0.08);
+}
+.dsh-github-guide-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 15px;
+  font-weight: 600;
+  margin-bottom: 6px;
+  color: var(--dsw-alias-label-primary, #1f2328);
+}
+body[data-ds-dark-theme] .dsh-github-guide-header {
+  color: var(--dsw-alias-label-primary, #f0f6fc);
+}
+.dsh-github-guide-desc {
+  font-size: 13px;
+  color: var(--dsw-alias-label-secondary, #656d76);
+  line-height: 1.5;
+  margin-bottom: 12px;
+}
+body[data-ds-dark-theme] .dsh-github-guide-desc {
+  color: var(--dsw-alias-label-secondary, #8c8c8c);
+}
+.dsh-github-cmd-box {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: var(--dsw-alias-bg-base, #ffffff);
+  border: 1px solid var(--dsw-alias-border-l2, #d0d7de);
+  border-radius: 6px;
+  padding: 8px 12px;
+  font-family: var(--ds-font-family-code, monospace);
+  font-size: 13px;
+  color: var(--dsw-alias-label-primary, #1f2328);
+  margin-bottom: 12px;
+}
+body[data-ds-dark-theme] .dsh-github-cmd-box {
+  background: var(--dsw-alias-bg-layer-2, #161b22);
+  border-color: var(--dsw-alias-border-l1, #30363d);
+  color: var(--dsw-alias-label-primary, #f0f6fc);
+}
+.dsh-github-copy-btn {
+  padding: 4px 10px;
+  font-size: 12px;
+  border-radius: 4px;
+  border: 1px solid var(--dsw-alias-border-l2, #d0d7de);
+  background: var(--dsw-alias-bg-layer-1, #f6f8fa);
+  color: var(--dsw-alias-label-primary, #1f2328);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 0.15s ease;
+}
+body[data-ds-dark-theme] .dsh-github-copy-btn {
+  background: var(--dsw-alias-bg-layer-2, #21262d);
+  border-color: var(--dsw-alias-border-l1, #30363d);
+  color: var(--dsw-alias-label-primary, #c9d1d9);
+}
+.dsh-github-copy-btn:hover {
+  background: var(--dsw-alias-interactive-bg-hover, #ebeef1);
+}
+body[data-ds-dark-theme] .dsh-github-copy-btn:hover {
+  background: #30363d;
+}
+.dsh-github-copy-btn.copied {
+  color: #2da44e !important;
+  border-color: #2da44e !important;
+  background: rgba(45, 164, 78, 0.15) !important;
+}
+.dsh-github-steps-list {
+  font-size: 12px;
+  color: var(--dsw-alias-label-secondary, #656d76);
+  line-height: 1.6;
+  margin: 0 0 12px 18px;
+  padding: 0;
+}
+body[data-ds-dark-theme] .dsh-github-steps-list {
+  color: var(--dsw-alias-label-secondary, #8c8c8c);
+}
+.dsh-github-guide-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.dsh-github-guide-tip {
+  font-size: 11px;
+  color: var(--dsw-alias-label-tertiary, #8c8c8c);
+  margin-top: 10px;
+  line-height: 1.4;
+}
+
+/* 16. 设置弹窗 (Settings Modal)：左侧分区导航 + 右侧内容区 */
+.dsh-github-modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 99999;
+  backdrop-filter: blur(2px);
+}
+.dsh-github-modal-dialog {
+  width: 92%;
+  max-width: 640px;
+  max-height: 86vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--dsw-alias-bg-base, #ffffff);
+  border: 1px solid var(--dsw-alias-border-l2, #d0d7de);
+  border-radius: 12px;
+  box-shadow: 0 16px 32px rgba(0, 0, 0, 0.18);
+  padding: 0;
+  box-sizing: border-box;
+  overflow: hidden;
+  color: var(--dsw-alias-label-primary, #1f2328);
+  font-family: var(--dsw-font-family, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif);
+}
+body[data-ds-dark-theme] .dsh-github-modal-dialog {
+  background: var(--dsw-alias-bg-layer-2, #1e1e22);
+  border-color: var(--dsw-alias-border-l1, #30363d);
+  box-shadow: 0 16px 36px rgba(0, 0, 0, 0.45);
+}
+.dsh-github-modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 18px 22px 14px;
+  border-bottom: 1px solid var(--dsw-alias-border-l2, #d0d7de);
+  flex-shrink: 0;
+}
+body[data-ds-dark-theme] .dsh-github-modal-header {
+  border-bottom-color: var(--dsw-alias-border-l1, #30363d);
+}
+.dsh-github-modal-body {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+}
+.dsh-github-settings-nav {
+  flex-shrink: 0;
+  width: 148px;
+  padding: 14px 10px;
+  border-right: 1px solid var(--dsw-alias-border-l2, #d0d7de);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  box-sizing: border-box;
+}
+body[data-ds-dark-theme] .dsh-github-settings-nav {
+  border-right-color: var(--dsw-alias-border-l1, #30363d);
+}
+.dsh-github-settings-nav-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  border: none;
+  background: none;
+  cursor: pointer;
+  font-size: 13px;
+  text-align: left;
+  color: var(--dsw-alias-label-secondary, #656d76);
+  transition: background 0.12s ease, color 0.12s ease;
+}
+.dsh-github-settings-nav-item:hover {
+  background: var(--dsw-alias-bg-layer-1, #f6f8fa);
+  color: var(--dsw-alias-label-primary, #1f2328);
+}
+.dsh-github-settings-nav-item.active {
+  background: rgba(9, 105, 218, 0.1);
+  color: var(--dsw-alias-link, #0969da);
+  font-weight: 600;
+}
+body[data-ds-dark-theme] .dsh-github-settings-nav-item:hover {
+  background: rgba(240, 246, 252, 0.06);
+  color: var(--dsw-alias-label-primary, #f0f6fc);
+}
+body[data-ds-dark-theme] .dsh-github-settings-nav-item.active {
+  background: rgba(88, 166, 255, 0.15);
+  color: #58a6ff;
+}
+.dsh-github-settings-content {
+  flex: 1;
+  min-width: 0;
+  padding: 18px 22px 20px;
+  overflow-y: auto;
+  box-sizing: border-box;
+}
+@media (max-width: 560px) {
+  .dsh-github-modal-body {
+    flex-direction: column;
+  }
+  .dsh-github-settings-nav {
+    width: 100%;
+    flex-direction: row;
+    border-right: none;
+    border-bottom: 1px solid var(--dsw-alias-border-l2, #d0d7e0);
+    overflow-x: auto;
+  }
+  body[data-ds-dark-theme] .dsh-github-settings-nav {
+    border-bottom-color: var(--dsw-alias-border-l1, #30363d);
+  }
+  .dsh-github-settings-nav-item {
+    white-space: nowrap;
+  }
+}
+.dsh-github-modal-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 14px 22px;
+  border-top: 1px solid var(--dsw-alias-border-l2, #d0d7de);
+  flex-shrink: 0;
+}
+body[data-ds-dark-theme] .dsh-github-modal-footer {
+  border-top-color: var(--dsw-alias-border-l1, #30363d);
+}
+.dsh-github-radio-card {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--dsw-alias-border-l2, #d0d7de);
+  margin-bottom: 8px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  background: var(--dsw-alias-bg-layer-1, #f6f8fa);
+}
+.dsh-github-radio-card:hover {
+  border-color: var(--dsw-alias-link, #0969da);
+}
+.dsh-github-radio-card.active {
+  border-color: var(--dsw-alias-link, #0969da);
+  background: rgba(9, 105, 218, 0.08);
+}
+body[data-ds-dark-theme] .dsh-github-radio-card {
+  background: var(--dsw-alias-bg-base, #161b22);
+  border-color: var(--dsw-alias-border-l1, #30363d);
+}
+body[data-ds-dark-theme] .dsh-github-radio-card.active {
+  border-color: #58a6ff;
+  background: rgba(88, 166, 255, 0.12);
+}
+
+.dsh-github-select {
+  width: 100%;
+  padding: 8px 12px;
+  border-radius: 6px;
+  border: 1px solid var(--dsw-alias-border-l2, #d0d7de);
+  background: var(--dsw-alias-bg-base, #ffffff);
+  color: var(--dsw-alias-label-primary, #1f2328);
+  font-size: 13px;
+  outline: none;
+  cursor: pointer;
+  box-sizing: border-box;
+  color-scheme: light;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.dsh-github-select:focus {
+  border-color: var(--dsw-alias-link, #0969da);
+  box-shadow: 0 0 0 3px rgba(9, 105, 218, 0.15);
+}
+.dsh-github-select option {
+  background-color: #ffffff;
+  color: #1f2328;
+  padding: 6px 10px;
+}
+body[data-ds-dark-theme] .dsh-github-select {
+  border-color: var(--dsw-alias-border-l1, #30363d);
+  background: var(--dsw-alias-bg-layer-2, #1e1e22);
+  color: var(--dsw-alias-label-primary, #f0f6fc);
+  color-scheme: dark;
+}
+body[data-ds-dark-theme] .dsh-github-select:focus {
+  border-color: #58a6ff;
+  box-shadow: 0 0 0 3px rgba(88, 166, 255, 0.2);
+}
+body[data-ds-dark-theme] .dsh-github-select option {
+  background-color: #1e1e22;
+  color: #f0f6fc;
+}
+
+.dsh-github-input {
+  padding: 7px 12px;
+  border-radius: 6px;
+  border: 1px solid var(--dsw-alias-border-l2, #d0d7de);
+  background: var(--dsw-alias-bg-base, #ffffff);
+  color: var(--dsw-alias-label-primary, #1f2328);
+  font-size: 13px;
+  outline: none;
+  box-sizing: border-box;
+  color-scheme: light;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.dsh-github-input:focus {
+  border-color: var(--dsw-alias-link, #0969da);
+  box-shadow: 0 0 0 3px rgba(9, 105, 218, 0.15);
+}
+.dsh-github-input::placeholder {
+  color: var(--dsw-alias-label-tertiary, #8c959f);
+}
+body[data-ds-dark-theme] .dsh-github-input {
+  border-color: var(--dsw-alias-border-l1, #30363d);
+  background: var(--dsw-alias-bg-layer-2, #1e1e22);
+  color: var(--dsw-alias-label-primary, #f0f6fc);
+  color-scheme: dark;
+}
+body[data-ds-dark-theme] .dsh-github-input:focus {
+  border-color: #58a6ff;
+  box-shadow: 0 0 0 3px rgba(88, 166, 255, 0.2);
+}
+
+.dsh-github-cache-info-box {
+  padding: 10px 12px;
+  border-radius: 6px;
+  background: var(--dsw-alias-bg-layer-1, #f6f8fa);
+  border: 1px solid var(--dsw-alias-border-l2, #d0d7de);
+  margin-bottom: 20px;
+  font-size: 12px;
+  color: var(--dsw-alias-label-secondary, #656d76);
+  transition: all 0.15s ease;
+}
+body[data-ds-dark-theme] .dsh-github-cache-info-box {
+  background: var(--dsw-alias-bg-base, #161b22);
+  border-color: var(--dsw-alias-border-l1, #30363d);
+  color: var(--dsw-alias-label-secondary, #8c8c8c);
+}
+
+.dsh-github-about-star-box {
+  padding: 12px 14px;
+  border-radius: 8px;
+  background: var(--dsw-alias-bg-layer-1, #f6f8fa);
+  border: 1px solid var(--dsw-alias-border-l2, #d0d7de);
+}
+body[data-ds-dark-theme] .dsh-github-about-star-box {
+  background: var(--dsw-alias-bg-base, #161b22);
+  border-color: var(--dsw-alias-border-l1, #30363d);
+}
+
+.dsh-github-primary-btn {
+  padding: 5px 14px;
+  font-weight: 600;
+  white-space: nowrap;
+  background: var(--dsw-alias-link, #0969da);
+  border-color: var(--dsw-alias-link, #0969da);
+  color: #ffffff;
+}
+.dsh-github-primary-btn:hover {
+  background: var(--dsw-alias-link, #0969da);
+  border-color: var(--dsw-alias-link, #0969da);
+  color: #ffffff;
+  opacity: 0.88;
+}
+body[data-ds-dark-theme] .dsh-github-primary-btn {
+  background: #58a6ff;
+  border-color: #58a6ff;
+  color: #0d1117;
+}
+body[data-ds-dark-theme] .dsh-github-primary-btn:hover {
+  background: #58a6ff;
+  border-color: #58a6ff;
+  color: #0d1117;
+  opacity: 0.88;
+}
+
+.dsh-github-radio {
+  accent-color: var(--dsw-alias-link, #0969da);
+  cursor: pointer;
+  margin-top: 3px;
+}
+body[data-ds-dark-theme] .dsh-github-radio {
+  accent-color: #58a6ff;
+}
+
+#dsh-github-commit-dialog {
+  max-width: 600px;
+  width: calc(100vw - 48px);
+  border: 1px solid var(--dsw-alias-border-l2, #d0d7de);
+  border-radius: 12px;
+  padding: 0;
+  box-sizing: border-box;
+  background: var(--dsw-alias-bg-base, #ffffff);
+  color: var(--dsw-alias-label-primary, #1f2328);
+  box-shadow: 0 16px 36px rgba(0, 0, 0, 0.22);
+  font-family: var(--dsw-font-family, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif);
+}
+#dsh-github-commit-dialog::backdrop {
+  background: rgba(0, 0, 0, 0.45);
+  backdrop-filter: blur(2px);
+}
+body[data-ds-dark-theme] #dsh-github-commit-dialog {
+  background: var(--dsw-alias-bg-layer-2, #1e1e22);
+  border-color: var(--dsw-alias-border-l1, #30363d);
+  color: var(--dsw-alias-label-primary, #ececec);
+  box-shadow: 0 16px 36px rgba(0, 0, 0, 0.5);
+}
+.dsh-github-commit-row {
+  transition: background 0.15s ease;
+}
+.dsh-github-commit-row:hover {
+  background: var(--dsw-alias-interactive-bg-hover, rgba(0, 0, 0, 0.05));
+}
+body[data-ds-dark-theme] .dsh-github-commit-row:hover {
+  background: var(--dsw-alias-interactive-bg-hover, rgba(255, 255, 255, 0.08));
+}
+body[data-ds-dark-theme] .dsh-github-commit-pre {
+  background: var(--dsw-alias-bg-base, #151517) !important;
+  color: #ececec !important;
+  border: 1px solid #30363d !important;
+}
+.dsh-github-dialog-close-btn:hover {
+  background: var(--dsw-alias-interactive-bg-hover, rgba(0, 0, 0, 0.08)) !important;
+  opacity: 1 !important;
+}
+
+.dsh-github-branch-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  font-size: 11px;
+  font-weight: 500;
+  border-radius: 12px;
+  border: 1px solid rgba(46, 160, 67, 0.4);
+  background: rgba(46, 160, 67, 0.12);
+  color: var(--dsw-alias-state-success, #2ea043);
+  cursor: pointer;
+  transition: all 0.15s ease;
+  user-select: none;
+}
+.dsh-github-branch-btn:hover {
+  background: rgba(46, 160, 67, 0.22);
+  border-color: rgba(46, 160, 67, 0.6);
+}
+body[data-ds-dark-theme] .dsh-github-branch-btn {
+  border-color: rgba(56, 139, 253, 0.4);
+  background: rgba(56, 139, 253, 0.15);
+  color: #58a6ff;
+}
+body[data-ds-dark-theme] .dsh-github-branch-btn:hover {
+  background: rgba(56, 139, 253, 0.25);
+  border-color: #58a6ff;
+}
+
+.dsh-github-branch-dropdown {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  margin-top: 5px;
+  width: 290px;
+  max-height: 380px;
+  background: var(--dsw-alias-bg-base, #ffffff);
+  border: 1px solid var(--dsw-alias-border-l2, #e1e4e8);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.16);
+  z-index: 1000;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+body[data-ds-dark-theme] .dsh-github-branch-dropdown {
+  background: var(--dsw-alias-bg-layer-2, #1e1e22);
+  border-color: var(--dsw-alias-border-l1, #30363d);
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.5);
+}
+
+.dsh-github-branch-search {
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--dsw-alias-border-l2, #e1e4e8);
+}
+body[data-ds-dark-theme] .dsh-github-branch-search {
+  border-bottom-color: var(--dsw-alias-border-l1, #30363d);
+}
+.dsh-github-branch-input {
+  width: 100%;
+  padding: 5px 8px;
+  box-sizing: border-box;
+  font-size: 11px;
+  border-radius: 5px;
+  border: 1px solid var(--dsw-alias-border-l2, #d0d7de);
+  background: var(--dsw-alias-bg-base, #ffffff);
+  color: var(--dsw-alias-label-primary, #1f2328);
+  outline: none;
+}
+body[data-ds-dark-theme] .dsh-github-branch-input {
+  border-color: var(--dsw-alias-border-l1, #30363d);
+  background: var(--dsw-alias-bg-base, #151517);
+  color: #ececec;
+}
+.dsh-github-branch-input:focus {
+  border-color: var(--dsw-alias-link, #0969da);
+}
+
+.dsh-github-branch-list {
+  flex: 1;
+  overflow-y: auto;
+  max-height: 280px;
+  padding: 4px 0;
+}
+.dsh-github-branch-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 12px;
+  font-size: 12px;
+  cursor: pointer;
+  transition: background 0.12s ease;
+  color: var(--dsw-alias-label-primary, #1f2328);
+}
+body[data-ds-dark-theme] .dsh-github-branch-item {
+  color: var(--dsw-alias-label-primary, #ececec);
+}
+.dsh-github-branch-item:hover {
+  background: var(--dsw-alias-interactive-bg-hover, rgba(0, 0, 0, 0.05));
+}
+body[data-ds-dark-theme] .dsh-github-branch-item:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+.dsh-github-branch-item.active {
+  font-weight: 600;
+  color: var(--dsw-alias-state-success, #1a7f37);
+}
+body[data-ds-dark-theme] .dsh-github-branch-item.active {
+  color: #3fb950;
+}
+
+/* 15. 独立沉浸式指南大窗口 (Help Modal) 双主题体系 */
+.dsh-github-help-dialog {
+  width: 920px;
+  max-width: 92vw;
+  height: 85vh;
+  max-height: 85vh;
+  display: flex;
+  flex-direction: column;
+  border-radius: 12px;
+  background: var(--dsw-alias-bg-base, #ffffff);
+  border: 1px solid var(--dsw-alias-border-l2, #d0d7de);
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.22);
+  color: var(--dsw-alias-label-primary, #1f2328);
+  font-family: var(--dsw-font-family, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif);
+  overflow: hidden;
+  box-sizing: border-box;
+}
+body[data-ds-dark-theme] .dsh-github-help-dialog {
+  background: var(--dsw-alias-bg-layer-2, #1c2128);
+  border-color: var(--dsw-alias-border-l1, #30363d);
+  color: var(--dsw-alias-label-primary, #f0f6fc);
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.65);
+}
+
+.dsh-github-help-header {
+  padding: 16px 22px;
+  border-bottom: 1px solid var(--dsw-alias-border-l2, #d0d7de);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-shrink: 0;
+  background: var(--dsw-alias-bg-base, #ffffff);
+}
+body[data-ds-dark-theme] .dsh-github-help-header {
+  background: var(--dsw-alias-bg-layer-2, #1c2128);
+  border-bottom-color: var(--dsw-alias-border-l1, #30363d);
+}
+
+.dsh-github-help-nav {
+  display: flex;
+  gap: 8px;
+  padding: 10px 22px;
+  background: var(--dsw-alias-bg-module-platform, rgba(9, 105, 218, 0.05));
+  border-bottom: 1px solid var(--dsw-alias-border-l2, #d0d7de);
+  flex-shrink: 0;
+}
+body[data-ds-dark-theme] .dsh-github-help-nav {
+  background: rgba(56, 139, 253, 0.08);
+  border-bottom-color: var(--dsw-alias-border-l1, #30363d);
+}
+
+.dsh-github-help-tab-btn {
+  padding: 6px 14px;
+  font-size: 13px;
+  font-weight: 500;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--dsw-alias-label-secondary, #656d76);
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+body[data-ds-dark-theme] .dsh-github-help-tab-btn {
+  color: var(--dsw-alias-label-secondary, #8b949e);
+}
+.dsh-github-help-tab-btn:hover {
+  background: rgba(0, 0, 0, 0.05);
+}
+body[data-ds-dark-theme] .dsh-github-help-tab-btn:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: #f0f6fc;
+}
+.dsh-github-help-tab-btn.active {
+  font-weight: 600;
+  background: var(--dsw-alias-link, #0969da);
+  color: #ffffff !important;
+  border-color: var(--dsw-alias-link, #0969da);
+}
+body[data-ds-dark-theme] .dsh-github-help-tab-btn.active {
+  background: #1f6feb;
+  border-color: #1f6feb;
+}
+
+.dsh-github-help-scroll-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 22px;
+  box-sizing: border-box;
+}
+.dsh-github-help-scroll-body::-webkit-scrollbar {
+  width: 6px;
+}
+.dsh-github-help-scroll-body::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.15);
+  border-radius: 3px;
+}
+body[data-ds-dark-theme] .dsh-github-help-scroll-body::-webkit-scrollbar-thumb {
+  background: #30363d;
+}
+
+.dsh-github-help-card {
+  padding: 16px 18px;
+  margin-bottom: 14px;
+  border-radius: 8px;
+  background: var(--dsw-alias-bg-module-platform, rgba(9, 105, 218, 0.04));
+  border: 1px solid var(--dsw-alias-border-l2, rgba(9, 105, 218, 0.18));
+  transition: border-color 0.15s ease;
+}
+body[data-ds-dark-theme] .dsh-github-help-card {
+  background: rgba(56, 139, 253, 0.05);
+  border-color: rgba(56, 139, 253, 0.18);
+}
+.dsh-github-help-card:hover {
+  border-color: rgba(9, 105, 218, 0.35);
+}
+body[data-ds-dark-theme] .dsh-github-help-card:hover {
+  border-color: rgba(56, 139, 253, 0.4);
+}
+
+.dsh-github-prompt-box {
+  padding: 10px 14px;
+  margin-bottom: 8px;
+  border-radius: 6px;
+  background: #f6f8fa;
+  border: 1px solid #d0d7de;
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--dsw-alias-label-primary, #1f2328);
+  word-break: break-all;
+}
+body[data-ds-dark-theme] .dsh-github-prompt-box {
+  background: #0d1117;
+  border-color: #30363d;
+  color: #79c0ff;
+}
+
+.dsh-github-help-step-badge {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: var(--dsw-alias-link, #0969da);
+  color: #ffffff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  font-size: 14px;
+  flex-shrink: 0;
+}
+body[data-ds-dark-theme] .dsh-github-help-step-badge {
+  background: #1f6feb;
+  box-shadow: 0 0 10px rgba(31, 111, 235, 0.35);
+}
+
+.dsh-github-help-footer {
+  padding: 12px 22px;
+  border-top: 1px solid var(--dsw-alias-border-l2, #d0d7de);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background: var(--dsw-alias-bg-base, #ffffff);
+  flex-shrink: 0;
+}
+body[data-ds-dark-theme] .dsh-github-help-footer {
+  background: var(--dsw-alias-bg-layer-2, #1c2128);
+  border-top-color: var(--dsw-alias-border-l1, #30363d);
+}
+
+.dsh-github-help-title {
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--dsw-alias-label-primary, #1f2328);
+}
+body[data-ds-dark-theme] .dsh-github-help-title {
+  color: var(--dsw-alias-label-primary, #f0f6fc);
+}
+
+.dsh-github-help-desc {
+  font-size: 12px;
+  color: var(--dsw-alias-label-secondary, #656d76);
+  line-height: 1.5;
+}
+body[data-ds-dark-theme] .dsh-github-help-desc {
+  color: var(--dsw-alias-label-secondary, #8b949e);
+}
+
+/* 16. 未提交文件清单交互与 Git Diff 对比视图 */
+.dsh-github-dirty-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 6px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background-color 0.15s ease;
+  user-select: none;
+}
+.dsh-github-dirty-item:hover {
+  background: var(--dsw-alias-interactive-bg-hover, rgba(0, 0, 0, 0.05));
+}
+body[data-ds-dark-theme] .dsh-github-dirty-item:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+.dsh-github-dirty-item:active {
+  background: var(--dsw-alias-interactive-bg-active, rgba(0, 0, 0, 0.08));
+}
+body[data-ds-dark-theme] .dsh-github-dirty-item:active {
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.dsh-github-inline-diff-view {
+  animation: dsh-github-fade-in 0.15s ease-out;
+}
+@keyframes dsh-github-fade-in {
+  from { opacity: 0; transform: translateY(2px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+body[data-ds-dark-theme] .dsh-github-inline-diff-content {
+  background-color: var(--dsw-alias-bg-layer-2, #1c2128) !important;
+  border-color: var(--dsw-alias-border-l1, #30363d) !important;
+}
+
+/* 17. 提交详情文件变更统计结构化高亮 */
+.dsh-github-stat-list {
+  border: 1px solid var(--dsw-alias-border-l2, #e1e4e8);
+  background: var(--dsw-alias-bg-module-platform, #f6f8fa);
+}
+body[data-ds-dark-theme] .dsh-github-stat-list {
+  border-color: var(--dsw-alias-border-l1, #30363d) !important;
+  background: var(--dsw-alias-bg-layer-2, #1c2128) !important;
+}
+
+.dsh-github-stat-row {
+  transition: background-color 0.15s ease;
+}
+.dsh-github-stat-row:hover {
+  background: var(--dsw-alias-interactive-bg-hover, rgba(0, 0, 0, 0.04));
+}
+body[data-ds-dark-theme] .dsh-github-stat-row:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+/* 18. 右侧栏上方卡片折叠/展开动画与按钮样式 */
+.dsh-github-header-cards-collapsed {
+  display: none !important;
+}
+
+.dsh-github-btn-sm.active {
+  background: var(--dsw-alias-state-attention-subtle, rgba(234, 179, 8, 0.15)) !important;
+  color: var(--dsw-alias-state-attention-primary, #9a6700) !important;
+  border-color: var(--dsw-alias-state-attention-primary, #d29922) !important;
+}
+body[data-ds-dark-theme] .dsh-github-btn-sm.active {
+  background: rgba(234, 179, 8, 0.2) !important;
+  color: #f0b72f !important;
+  border-color: #d29922 !important;
+}
+/* ============================================================================
+   台账改造（design system layer）
+   —— 覆盖而非重写：上面的规则保留，这一层用同一套 token 把它们收敛成
+   一套系统。核心判断：DSH 主题里 bg-layer-1/2/3 在浅色下同色、暗色只差
+   9 个 RGB 台阶，所以「块」只能由 1px 描边 + 留白定义，不能靠填充；
+   字号只留四档，层级靠字号/字重而不是把颜色洗淡。
+   ============================================================================ */
+
+.dsh-github-panel {
+  /* 间距刻度：七档，超出即错 */
+  --gh-s1: 2px;  --gh-s2: 4px;  --gh-s3: 6px; --gh-s4: 8px;
+  --gh-s5: 12px; --gh-s6: 16px; --gh-s7: 24px;
+  /* 圆角：块 6 / 行 4，只有两档 */
+  --gh-radius: 6px; --gh-radius-row: 4px;
+  /* 字号阶梯：15 / 13 / 12 / 11 */
+  --gh-fs-slug: 15px; --gh-fs-title: 13px; --gh-fs-sub: 12px; --gh-fs-meta: 11px;
+  --gh-line-hair: var(--dsw-alias-border-l1, rgba(0,0,0,.08));
+  --gh-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+}
+
+/* 面板本身：12px 横向预算，不再是 18+16+16 三重留白 */
+.dsh-github-panel {
+  padding: var(--gh-s5) var(--gh-s5) var(--gh-s7);
+}
+
+/* ── 锚点块：全panel唯一描边块 ───────────────────────────────────────── */
+.dsh-github-card.gh-anchor {
+  border: 1px solid var(--dsw-alias-border-l2, #e1e4e8);
+  background: transparent;
+  border-radius: var(--gh-radius);
+  padding: var(--gh-s5);
+  display: flex;
+  flex-direction: column;
+  gap: var(--gh-s2);
+}
+body[data-ds-dark-theme] .dsh-github-card.gh-anchor {
+  border-color: var(--dsw-alias-border-l1, #333336);
+  background: transparent;
+}
+.gh-anchor-top {
+  display: flex;
+  align-items: center;
+  gap: var(--gh-s2);
+  min-width: 0;
+}
+.gh-slug {
+  font-size: var(--gh-fs-slug);
+  line-height: 20px;
+  font-weight: 600;
+  color: var(--dsw-alias-link, #0969da);
+  text-decoration: none;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+}
+body[data-ds-dark-theme] .gh-slug { color: #58a6ff; }
+.gh-slug.is-error { color: var(--dsw-alias-state-error-primary, #cf222e); font-weight: 500; font-size: var(--gh-fs-title); }
+.gh-anchor-sub {
+  display: flex;
+  align-items: center;
+  gap: var(--gh-s3);
+  flex-wrap: wrap;
+  font-size: var(--gh-fs-sub);
+  color: var(--dsw-alias-label-secondary, #57606a);
+  min-width: 0;
+}
+/* 分支名占满剩余宽度并省略，把下拉与「手动」留在同一行右侧 */
+.gh-anchor-sub > .gh-mono:first-child {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.gh-anchor-desc {
+  font-size: var(--gh-fs-sub);
+  line-height: 16px;
+  color: var(--dsw-alias-label-secondary, #57606a);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* 调试信息默认折叠：账号/scopes/仓库根不该出现在主界面 */
+.gh-details { margin-top: var(--gh-s1); }
+.gh-details > summary {
+  font-size: var(--gh-fs-meta);
+  color: var(--dsw-alias-label-secondary, #57606a);
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+}
+.gh-details > summary::-webkit-details-marker { display: none; }
+.gh-details > summary::before { content: "▸ "; }
+.gh-details[open] > summary::before { content: "▾ "; }
+.gh-details-body {
+  margin-top: var(--gh-s2);
+  display: flex;
+  flex-direction: column;
+  gap: var(--gh-s1);
+  font-size: var(--gh-fs-meta);
+  line-height: 14px;
+  color: var(--dsw-alias-label-secondary, #57606a);
+  word-break: break-all;
+}
+
+/* ── 图标按钮：无色、24px、只换底色 ──────────────────────────────────── */
+.gh-icon-btn {
+  width: 24px; height: 24px;
+  display: inline-flex; align-items: center; justify-content: center;
+  padding: 0; flex-shrink: 0;
+  border: 1px solid transparent;
+  border-radius: var(--gh-radius-row);
+  background: transparent;
+  color: var(--dsw-alias-label-secondary, #57606a);
+  font-size: 13px; line-height: 1;
+  cursor: pointer;
+  transition: background-color 120ms ease, color 120ms ease;
+}
+.gh-icon-btn:hover {
+  background: var(--dsw-alias-interactive-bg-hover, rgba(0,0,0,.05));
+  color: var(--dsw-alias-label-primary, #1f2328);
+}
+
+/* ── Tab：下划线式文字 tab，不是胶囊 ─────────────────────────────────── */
+.dsh-github-tabs.gh-tabs {
+  display: flex;
+  flex-wrap: nowrap;
+  gap: var(--gh-s5);
+  border-bottom: 1px solid var(--gh-line-hair);
+  margin-bottom: var(--gh-s5);
+  padding: 0;
+}
+.gh-tab {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  padding: 0 0 var(--gh-s4);
+  flex: 1 1 auto;
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--gh-s1);
+  font-size: var(--gh-fs-sub);
+  line-height: 16px;
+  font-weight: 500;
+  color: var(--dsw-alias-label-secondary, #57606a);
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  white-space: nowrap;
+  transition: color 120ms ease, border-color 120ms ease;
+}
+.gh-tab:hover { color: var(--dsw-alias-label-primary, #1f2328); }
+.gh-tab.active {
+  color: var(--dsw-alias-label-primary, #1f2328);
+  border-bottom-color: var(--dsw-alias-link, #0969da);
+  font-weight: 600;
+}
+body[data-ds-dark-theme] .gh-tab { color: var(--dsw-alias-label-secondary, #9ca3af); }
+body[data-ds-dark-theme] .gh-tab.active { color: var(--dsw-alias-label-primary, #f0f6fc); }
+/* 计数芯片：全panel唯一允许的填充芯片 */
+.gh-count {
+  font-size: 11px;
+  line-height: 14px;
+  padding: 1px 4px;
+  border-radius: var(--gh-radius-row);
+  background: var(--dsw-alias-bg-module-platform, rgba(0,0,0,.06));
+  color: var(--dsw-alias-label-secondary, #57606a);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── 列表：零卡片台账 ────────────────────────────────────────────────── */
+.gh-ledger { display: flex; flex-direction: column; }
+.gh-row {
+  display: grid;
+  grid-template-columns: 14px 1fr 44px;
+  align-items: center;
+  column-gap: var(--gh-s4);
+  padding: var(--gh-s2) var(--gh-s2);
+  border-bottom: 1px solid var(--gh-line-hair);
+  border-radius: var(--gh-radius-row);
+  transition: background-color 120ms ease;
+}
+body[data-ds-dark-theme] .gh-row {
+  border-bottom-color: var(--dsw-alias-border-l2-darkmode-thin, rgba(255,255,255,.06));
+}
+.gh-row:hover { background: var(--dsw-alias-interactive-bg-hover, rgba(0,0,0,.04)); }
+.gh-row:last-child { border-bottom: 0; }
+.gh-spine {
+  font-size: 11px;
+  line-height: 1;
+  text-align: center;
+  font-family: var(--gh-mono);
+}
+.gh-spine.tone-success { color: var(--dsw-alias-state-success-primary, #1a7f37); }
+.gh-spine.tone-error   { color: var(--dsw-alias-state-error-primary, #cf222e); }
+.gh-spine.tone-warn    { color: var(--dsw-alias-state-attention-primary, #9a6700); }
+.gh-spine.tone-running { color: var(--dsw-alias-state-business-primary, #0969da); }
+/* 浅底上 tertiary 只有 3.0:1；中性态改用 secondary，层级靠字形（◇）区分 */
+.gh-spine.tone-neutral { color: var(--dsw-alias-label-secondary, #57606a); }
+.gh-row-main { min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.gh-row-title {
+  font-size: var(--gh-fs-title);
+  line-height: 18px;
+  font-weight: 500;
+  color: var(--dsw-alias-label-primary, #1f2328);
+  display: flex;
+  align-items: baseline;
+  gap: var(--gh-s2);
+  min-width: 0;
+}
+body[data-ds-dark-theme] .gh-row-title { color: var(--dsw-alias-label-primary, #f0f6fc); }
+.gh-row-title > a {
+  color: inherit; text-decoration: none;
+  min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.gh-row-title > a:hover { color: var(--dsw-alias-link, #0969da); text-decoration: underline; }
+.gh-prefix {
+  font-family: var(--gh-mono);
+  font-size: var(--gh-fs-meta);
+  color: var(--dsw-alias-label-secondary, #57606a);
+  flex-shrink: 0;
+}
+.gh-row-sub {
+  font-size: var(--gh-fs-sub);
+  line-height: 16px;
+  color: var(--dsw-alias-label-secondary, #57606a);
+  display: flex;
+  align-items: center;
+  gap: var(--gh-s3);
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+}
+/* 只有第一项（分支名）可以被压缩，后面的状态/计数一律完整显示 */
+.gh-row-sub > span { overflow: hidden; text-overflow: ellipsis; }
+.gh-row-sub > span:first-child { flex: 0 1 auto; min-width: 0; }
+.gh-row-sub > span:not(:first-child) { flex: 0 0 auto; }
+.gh-row-sub > span + span::before {
+  content: "·";
+  margin-right: var(--gh-s3);
+  color: var(--dsw-alias-label-tertiary, #8c959f);
+}
+.gh-mono { font-family: var(--gh-mono); font-variant-numeric: tabular-nums; }
+/* 右槽：常态时间，hover 原位换成按钮 —— 槽宽固定，零 reflow */
+.gh-slot {
+  width: 44px;
+  display: flex; align-items: center; justify-content: flex-end;
+  position: relative;
+  min-height: 20px;
+}
+.gh-slot-time {
+  font-size: var(--gh-fs-meta);
+  line-height: 14px;
+  color: var(--dsw-alias-label-secondary, #57606a);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.gh-slot-action { display: none; }
+.gh-row:hover .gh-slot-time { display: none; }
+.gh-row:hover .gh-slot-action { display: inline-flex; }
+
+/* ── 快捷操作：降到列表之后的一行文字链接 ────────────────────────────── */
+.gh-quick-row {
+  margin-top: var(--gh-s5);
+  padding-top: var(--gh-s4);
+  border-top: 1px solid var(--gh-line-hair);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--gh-s4);
+  font-size: var(--gh-fs-meta);
+}
+.gh-quick-link {
+  appearance: none; border: 0; background: transparent; padding: 0;
+  font-size: var(--gh-fs-meta);
+  color: var(--dsw-alias-label-secondary, #57606a);
+  cursor: pointer;
+  transition: color 120ms ease;
+}
+.gh-quick-link:hover { color: var(--dsw-alias-link, #0969da); }
+
+/* ── 分节标题：标签是脚手架，数据是主角 ──────────────────────────────── */
+.dsh-github-section-header h3 {
+  font-size: var(--gh-fs-sub);
+  line-height: 16px;
+  font-weight: 600;
+  color: var(--dsw-alias-label-secondary, #57606a);
+}
+
+/* ── 暗色覆盖 ─────────────────────────────────────────────────────────
+ * 为什么每条都要显式写：这些规则用 var(token, fallback) 兜底，而 fallback 取的是
+ * 浅色值；一旦宿主上下文里 token 缺失，暗色下就会掉到 2.85:1（实测）。
+ * 显式覆盖让「token 缺失」也仍然可读，而不是靠宿主一定提供。
+ */
+body[data-ds-dark-theme] .gh-anchor-sub,
+body[data-ds-dark-theme] .gh-anchor-desc,
+body[data-ds-dark-theme] .gh-row-sub,
+body[data-ds-dark-theme] .gh-details > summary,
+body[data-ds-dark-theme] .gh-details-body,
+body[data-ds-dark-theme] .gh-slot-time,
+body[data-ds-dark-theme] .gh-quick-link,
+body[data-ds-dark-theme] .gh-prefix {
+  color: var(--dsw-alias-label-secondary, #9ca3af);
+}
+body[data-ds-dark-theme] .gh-icon-btn {
+  color: var(--dsw-alias-label-secondary, #9ca3af);
+}
+body[data-ds-dark-theme] .gh-icon-btn:hover {
+  background: rgba(255,255,255,.08);
+  color: var(--dsw-alias-label-primary, #f0f6fc);
+}
+body[data-ds-dark-theme] .gh-count {
+  background: rgba(255,255,255,.10);
+  color: var(--dsw-alias-label-secondary, #9ca3af);
+}
+body[data-ds-dark-theme] .gh-spine.tone-neutral {
+  color: var(--dsw-alias-label-secondary, #9ca3af);
+}
+body[data-ds-dark-theme] .gh-row:hover {
+  background: var(--dsw-alias-interactive-bg-hover, rgba(255,255,255,.06));
+}
+body[data-ds-dark-theme] .gh-quick-link:hover { color: #58a6ff; }
+/* 脊柱字形在暗色下必须更亮：3.4:1 的绿/蓝小字读不出来（实测）。
+ * 形状仍是主编码（●✕○◇），颜色只是强化，但能读才算强化。 */
+body[data-ds-dark-theme] .gh-spine.tone-success { color: var(--dsw-alias-state-success-primary, #3fb950); }
+body[data-ds-dark-theme] .gh-spine.tone-error   { color: var(--dsw-alias-state-error-primary, #f85149); }
+body[data-ds-dark-theme] .gh-spine.tone-warn    { color: var(--dsw-alias-state-attention-primary, #d29922); }
+body[data-ds-dark-theme] .gh-spine.tone-running { color: var(--dsw-alias-state-business-primary, #58a6ff); }
+
+/* 旧卡片/徽章在台账里的收口：不再有阴影与多彩填充 */
+.dsh-github-card, .dsh-github-item { box-shadow: none !important; }
+.dsh-github-item { background: transparent !important; border: 0 !important; }
+
+
+*,:after,:before{--tw-border-spacing-x:0;--tw-border-spacing-y:0;--tw-translate-x:0;--tw-translate-y:0;--tw-rotate:0;--tw-skew-x:0;--tw-skew-y:0;--tw-scale-x:1;--tw-scale-y:1;--tw-pan-x: ;--tw-pan-y: ;--tw-pinch-zoom: ;--tw-scroll-snap-strictness:proximity;--tw-gradient-from-position: ;--tw-gradient-via-position: ;--tw-gradient-to-position: ;--tw-ordinal: ;--tw-slashed-zero: ;--tw-numeric-figure: ;--tw-numeric-spacing: ;--tw-numeric-fraction: ;--tw-ring-inset: ;--tw-ring-offset-width:0px;--tw-ring-offset-color:#fff;--tw-ring-color:rgba(59,130,246,.5);--tw-ring-offset-shadow:0 0 #0000;--tw-ring-shadow:0 0 #0000;--tw-shadow:0 0 #0000;--tw-shadow-colored:0 0 #0000;--tw-blur: ;--tw-brightness: ;--tw-contrast: ;--tw-grayscale: ;--tw-hue-rotate: ;--tw-invert: ;--tw-saturate: ;--tw-sepia: ;--tw-drop-shadow: ;--tw-backdrop-blur: ;--tw-backdrop-brightness: ;--tw-backdrop-contrast: ;--tw-backdrop-grayscale: ;--tw-backdrop-hue-rotate: ;--tw-backdrop-invert: ;--tw-backdrop-opacity: ;--tw-backdrop-saturate: ;--tw-backdrop-sepia: ;--tw-contain-size: ;--tw-contain-layout: ;--tw-contain-paint: ;--tw-contain-style: }::backdrop{--tw-border-spacing-x:0;--tw-border-spacing-y:0;--tw-translate-x:0;--tw-translate-y:0;--tw-rotate:0;--tw-skew-x:0;--tw-skew-y:0;--tw-scale-x:1;--tw-scale-y:1;--tw-pan-x: ;--tw-pan-y: ;--tw-pinch-zoom: ;--tw-scroll-snap-strictness:proximity;--tw-gradient-from-position: ;--tw-gradient-via-position: ;--tw-gradient-to-position: ;--tw-ordinal: ;--tw-slashed-zero: ;--tw-numeric-figure: ;--tw-numeric-spacing: ;--tw-numeric-fraction: ;--tw-ring-inset: ;--tw-ring-offset-width:0px;--tw-ring-offset-color:#fff;--tw-ring-color:rgba(59,130,246,.5);--tw-ring-offset-shadow:0 0 #0000;--tw-ring-shadow:0 0 #0000;--tw-shadow:0 0 #0000;--tw-shadow-colored:0 0 #0000;--tw-blur: ;--tw-brightness: ;--tw-contrast: ;--tw-grayscale: ;--tw-hue-rotate: ;--tw-invert: ;--tw-saturate: ;--tw-sepia: ;--tw-drop-shadow: ;--tw-backdrop-blur: ;--tw-backdrop-brightness: ;--tw-backdrop-contrast: ;--tw-backdrop-grayscale: ;--tw-backdrop-hue-rotate: ;--tw-backdrop-invert: ;--tw-backdrop-opacity: ;--tw-backdrop-saturate: ;--tw-backdrop-sepia: ;--tw-contain-size: ;--tw-contain-layout: ;--tw-contain-paint: ;--tw-contain-style: }.\!container{width:100%!important}.container{width:100%}@media (min-width:640px){.\!container{max-width:640px!important}.container{max-width:640px}}@media (min-width:768px){.\!container{max-width:768px!important}.container{max-width:768px}}@media (min-width:1024px){.\!container{max-width:1024px!important}.container{max-width:1024px}}@media (min-width:1280px){.\!container{max-width:1280px!important}.container{max-width:1280px}}@media (min-width:1536px){.\!container{max-width:1536px!important}.container{max-width:1536px}}.gh2-panel,.gh2-theme{--gh-c-fg:var(--dsw-alias-label-primary,#1f2328);--gh-c-fg2:var(--dsw-alias-label-secondary,#57606a);--gh-c-fg3:var(--dsw-alias-label-tertiary,#6e7781);--gh-c-line:var(--dsw-alias-border-l2,#d8dee4);--gh-c-line-strong:var(--dsw-alias-border-l3,#c8d1d9);--gh-c-accent:var(--dsw-alias-link,#0969da);--gh-c-ok:var(--dsw-alias-state-success-primary,#1a7f37);--gh-c-bad:var(--dsw-alias-state-error-primary,#cf222e);--gh-c-warn:var(--dsw-alias-state-attention-primary,#9a6700);--gh-c-busy:var(--dsw-alias-state-business-primary,#0969da)}[data-ds-dark-theme] .gh2-panel,[data-ds-dark-theme] .gh2-theme{--gh-c-fg:var(--dsw-alias-label-primary,#f0f6fc);--gh-c-fg2:var(--dsw-alias-label-secondary,#adbac7);--gh-c-fg3:var(--dsw-alias-label-tertiary,#8b949e);--gh-c-line:var(--dsw-alias-border-l2,hsla(0,0%,100%,.12));--gh-c-line-strong:var(--dsw-alias-border-l3,hsla(0,0%,100%,.18));--gh-c-accent:var(--dsw-alias-link,#58a6ff);--gh-c-ok:var(--dsw-alias-state-success-primary,#3fb950);--gh-c-bad:var(--dsw-alias-state-error-primary,#f85149);--gh-c-warn:var(--dsw-alias-state-attention-primary,#d29922);--gh-c-busy:var(--dsw-alias-state-business-primary,#58a6ff)}.gh2-panel{gap:.75rem;padding:.75rem .75rem 1.5rem}.gh2-card,.gh2-panel{display:flex;flex-direction:column}.gh2-card{position:relative;gap:.5rem;border-radius:12px;border-width:1px;border-color:var(--gh-c-line);padding:.875rem;background:linear-gradient(180deg,hsla(0,0%,100%,.72),hsla(0,0%,100%,.36));box-shadow:0 1px 2px rgba(0,0,0,.04)}[data-ds-dark-theme] .gh2-card{border-color:hsla(0,0%,100%,.1);background:linear-gradient(180deg,hsla(0,0%,100%,.055),hsla(0,0%,100%,.018));box-shadow:none}.gh2-card-top{min-width:0;gap:.5rem}.gh2-card-top,.gh2-repo-mark{display:flex;align-items:center}.gh2-repo-mark{height:1.5rem;width:1.5rem;flex-shrink:0;justify-content:center;border-radius:6px;border-width:1px;border-color:var(--gh-c-line);color:var(--gh-c-fg2);background:rgba(0,0,0,.03)}[data-ds-dark-theme] .gh2-repo-mark{border-color:hsla(0,0%,100%,.12);background:hsla(0,0%,100%,.06)}.gh2-slug{min-width:0;flex:1 1 0%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:16px;line-height:22px;font-weight:600;color:var(--gh-c-fg);text-decoration-line:none}.gh2-slug:hover{color:var(--gh-c-accent);text-decoration-line:underline}.gh2-slug--error{font-size:13px;line-height:18px;font-weight:500;color:var(--gh-c-bad)}.gh2-card-meta{display:flex;flex-wrap:wrap;-moz-column-gap:.5rem;column-gap:.5rem;row-gap:6px;padding-left:2rem;font-size:12px;line-height:16px;color:var(--gh-c-fg2)}.gh2-branch,.gh2-card-meta{min-width:0;align-items:center}.gh2-branch{display:inline-flex;max-width:100%;gap:.25rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;border-radius:6px;padding:.125rem 6px;font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,Liberation Mono,Courier New,monospace;font-size:11px;line-height:1rem;background:rgba(9,105,218,.08);color:var(--dsw-alias-link,#0969da)}[data-ds-dark-theme] .gh2-branch{background:rgba(88,166,255,.14);color:#79b8ff}.gh2-sync{display:inline-flex;align-items:center;gap:.25rem;border-radius:6px;padding:.125rem 6px;font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,Liberation Mono,Courier New,monospace;font-size:11px;line-height:1rem;color:var(--gh-c-fg2);background:rgba(0,0,0,.04)}[data-ds-dark-theme] .gh2-sync{background:hsla(0,0%,100%,.06)}.gh2-icon-btn{display:inline-flex;height:1.5rem;width:1.5rem;flex-shrink:0;cursor:pointer;align-items:center;justify-content:center;border-radius:6px;border-width:0;background-color:transparent;padding:0;font-size:13px;line-height:1;color:var(--gh-c-fg2);transition:background-color .12s ease,color .12s ease}.gh2-icon-btn:hover{color:var(--gh-c-fg);background:rgba(0,0,0,.06)}[data-ds-dark-theme] .gh2-icon-btn:hover{background:hsla(0,0%,100%,.1)}.gh2-segments{display:flex;width:100%;align-items:center;gap:.125rem;border-radius:10px;border-width:1px;border-color:var(--gh-c-line);padding:.125rem;background:rgba(0,0,0,.03)}[data-ds-dark-theme] .gh2-segments{border-color:hsla(0,0%,100%,.09);background:hsla(0,0%,100%,.04)}.gh2-segment{display:flex;min-width:0;flex:1 1 0%;cursor:pointer;align-items:center;justify-content:center;gap:.25rem;border-radius:7px;border-width:0;background-color:transparent;padding:6px .25rem;font-size:12px;line-height:16px;font-weight:500;color:var(--gh-c-fg2);transition:background-color .12s ease,color .12s ease,box-shadow .12s ease}.gh2-segment--active,.gh2-segment:hover{color:var(--gh-c-fg)}.gh2-segment--active{background:var(--dsw-alias-bg-layer-1,#fff);box-shadow:0 1px 2px rgba(0,0,0,.08),0 0 0 1px rgba(0,0,0,.04)}[data-ds-dark-theme] .gh2-segment--active{background:hsla(0,0%,100%,.14);box-shadow:0 0 0 1px hsla(0,0%,100%,.08)}.gh2-count{flex-shrink:0;border-radius:4px;padding:1px .25rem;font-size:11px;font-weight:600;line-height:15px;color:var(--gh-c-fg2);background:rgba(0,0,0,.06);font-variant-numeric:tabular-nums}[data-ds-dark-theme] .gh2-count{background:hsla(0,0%,100%,.12)}.gh2-list{display:flex;flex-direction:column;gap:.25rem}.gh2-row{display:grid;cursor:default;align-items:center;-moz-column-gap:.625rem;column-gap:.625rem;border-radius:8px;padding:.5rem;grid-template-columns:16px 1fr auto;border:1px solid transparent;transition:background-color .12s ease,border-color .12s ease}.gh2-row:hover{background:rgba(0,0,0,.035);border-color:rgba(0,0,0,.06)}[data-ds-dark-theme] .gh2-row:hover{background:hsla(0,0%,100%,.055);border-color:hsla(0,0%,100%,.07)}.gh2-dot{display:flex;height:1rem;width:1rem;align-items:center;justify-content:center;border-radius:9999px;font-size:10px;line-height:1}.gh2-dot--ok{color:var(--dsw-alias-state-success-primary,#1a7f37)}.gh2-dot--bad{color:var(--dsw-alias-state-error-primary,#cf222e)}.gh2-dot--warn{color:var(--dsw-alias-state-attention-primary,#9a6700)}.gh2-dot--busy{color:var(--dsw-alias-state-business-primary,#0969da)}.gh2-dot--idle{color:var(--dsw-alias-label-tertiary,#8c959f)}[data-ds-dark-theme] .gh2-dot--ok{color:#3fb950}[data-ds-dark-theme] .gh2-dot--bad{color:#f85149}[data-ds-dark-theme] .gh2-dot--warn{color:#d29922}[data-ds-dark-theme] .gh2-dot--busy{color:#58a6ff}[data-ds-dark-theme] .gh2-dot--idle{color:#8b949e}.gh2-prefix{flex-shrink:0;font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,Liberation Mono,Courier New,monospace;font-size:11px;line-height:1rem;color:var(--gh-c-fg2)}.gh2-row-main{flex-direction:column;gap:.125rem}.gh2-row-main,.gh2-row-title{display:flex;min-width:0}.gh2-row-title{align-items:baseline;gap:6px;font-size:13px;line-height:18px;font-weight:500;color:var(--gh-c-fg)}.gh2-row-title>a{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:inherit;text-decoration-line:none}.gh2-row-title>a:hover{color:var(--gh-c-accent);text-decoration-line:underline}.gh2-row-sub{display:flex;min-width:0;align-items:center;gap:6px;overflow:hidden;white-space:nowrap;font-size:12px;line-height:16px;color:var(--gh-c-fg2)}.gh2-row-sub>span:first-child{min-width:0;overflow:hidden;text-overflow:ellipsis}.gh2-row-sub>span+span:before{content:"·";margin-right:6px;color:var(--gh-c-fg3)}.gh2-row-slot{display:flex;align-items:center;justify-content:flex-end;gap:.25rem;align-self:center;font-size:11px;line-height:14px;color:var(--gh-c-fg2);font-variant-numeric:tabular-nums}.gh2-row-slot-btn,.gh2-row:hover .gh2-row-slot-time{display:none}.gh2-chip,.gh2-row:hover .gh2-row-slot-btn{display:inline-flex}.gh2-chip{flex-shrink:0;align-items:center;gap:.25rem;border-radius:4px;padding:1px 6px;font-size:11px;font-weight:500;line-height:15px}.gh2-chip--ok{background:rgba(26,127,55,.12);color:var(--dsw-alias-state-success-primary,#1a7f37)}.gh2-chip--bad{background:rgba(207,34,46,.12);color:var(--dsw-alias-state-error-primary,#cf222e)}.gh2-chip--warn{background:rgba(154,103,0,.14);color:var(--dsw-alias-state-attention-primary,#9a6700)}.gh2-chip--busy{background:rgba(9,105,218,.1);color:var(--dsw-alias-state-business-primary,#0969da)}.gh2-chip--idle{background:rgba(0,0,0,.06);color:var(--dsw-alias-label-secondary,#57606a)}[data-ds-dark-theme] .gh2-chip--ok{background:rgba(63,185,80,.16);color:#56d364}[data-ds-dark-theme] .gh2-chip--bad{background:rgba(248,81,73,.16);color:#ff7b72}[data-ds-dark-theme] .gh2-chip--warn{background:rgba(210,153,34,.18);color:#e3b341}[data-ds-dark-theme] .gh2-chip--busy{background:rgba(88,166,255,.16);color:#79c0ff}[data-ds-dark-theme] .gh2-chip--idle{background:hsla(0,0%,100%,.1);color:#adbac7}.gh2-section-head{margin-bottom:.25rem;display:flex;align-items:center;gap:.5rem;padding-left:.125rem;padding-right:.125rem}.gh2-section-title{font-size:12px;line-height:16px;font-weight:600}.gh2-section-count,.gh2-section-title{color:var(--gh-c-fg2)}.gh2-section-count{border-radius:4px;padding:1px .25rem;font-size:10px;line-height:14px;background:rgba(0,0,0,.05)}[data-ds-dark-theme] .gh2-section-count{background:hsla(0,0%,100%,.1)}.gh2-empty{flex-direction:column;padding:1.75rem .5rem;text-align:center;font-size:12px;line-height:16px;color:var(--gh-c-fg2)}.gh2-empty,.gh2-quick{display:flex;align-items:center;gap:6px}.gh2-quick{margin-top:.25rem;flex-wrap:wrap;border-top-width:1px;border-color:var(--gh-c-line);padding-top:.75rem}.gh2-quick-btn{cursor:pointer;border-radius:6px;border-width:1px;border-color:var(--gh-c-line);background-color:transparent;padding:.25rem .5rem;font-size:11px;line-height:14px;color:var(--gh-c-fg2);transition:background-color .12s ease,color .12s ease,border-color .12s ease}.gh2-quick-btn:hover{border-color:var(--gh-c-accent);color:var(--gh-c-accent);background:rgba(9,105,218,.06)}[data-ds-dark-theme] .gh2-quick-btn{border-color:hsla(0,0%,100%,.12)}[data-ds-dark-theme] .gh2-quick-btn:hover{background:rgba(88,166,255,.12);color:#79c0ff}.gh2-details{margin-top:.125rem;padding-left:2rem}.gh2-details>summary{cursor:pointer;list-style-type:none;font-size:11px;line-height:14px;color:var(--gh-c-fg2)}.gh2-details>summary::-webkit-details-marker{display:none}.gh2-details>summary:before{content:"▸ "}.gh2-details[open]>summary:before{content:"▾ "}.gh2-details-body{margin-top:.25rem;display:flex;flex-direction:column;gap:.125rem;word-break:break-all;font-size:11px;line-height:14px;color:var(--gh-c-fg2)}.visible{visibility:visible}.fixed{position:fixed}.absolute{position:absolute}.relative{position:relative}.mb-1{margin-bottom:.25rem}.mr-1{margin-right:.25rem}.mr-1\.5{margin-right:6px}.mt-0{margin-top:0}.mt-0\.5{margin-top:.125rem}.mt-1{margin-top:.25rem}.inline-block{display:inline-block}.flex{display:flex}.inline-flex{display:inline-flex}.table{display:table}.grid{display:grid}.contents{display:contents}.hidden{display:none}.h-4{height:1rem}.h-6{height:1.5rem}.w-4{width:1rem}.w-6{width:1.5rem}.w-full{width:100%}.min-w-0{min-width:0}.max-w-full{max-width:100%}.flex-1{flex:1 1 0%}.flex-shrink{flex-shrink:1}.shrink-0{flex-shrink:0}.transform{transform:translate(var(--tw-translate-x),var(--tw-translate-y)) rotate(var(--tw-rotate)) skewX(var(--tw-skew-x)) skewY(var(--tw-skew-y)) scaleX(var(--tw-scale-x)) scaleY(var(--tw-scale-y))}.cursor-default{cursor:default}.cursor-pointer{cursor:pointer}.resize{resize:both}.list-none{list-style-type:none}.flex-col{flex-direction:column}.flex-wrap{flex-wrap:wrap}.items-center{align-items:center}.items-baseline{align-items:baseline}.justify-end{justify-content:flex-end}.justify-center{justify-content:center}.gap-0{gap:0}.gap-0\.5{gap:.125rem}.gap-1{gap:.25rem}.gap-1\.5{gap:6px}.gap-2{gap:.5rem}.gap-3{gap:.75rem}.gap-x-2{-moz-column-gap:.5rem;column-gap:.5rem}.gap-x-2\.5{-moz-column-gap:.625rem;column-gap:.625rem}.gap-y-1{row-gap:.25rem}.gap-y-1\.5{row-gap:6px}.self-center{align-self:center}.overflow-hidden{overflow:hidden}.text-ellipsis{text-overflow:ellipsis}.whitespace-nowrap{white-space:nowrap}.break-all{word-break:break-all}.rounded-\[4px\]{border-radius:4px}.rounded-\[7px\]{border-radius:7px}.rounded-block{border-radius:10px}.rounded-chip{border-radius:6px}.rounded-full{border-radius:9999px}.rounded-panel{border-radius:12px}.rounded-row{border-radius:8px}.border{border-width:1px}.border-0{border-width:0}.border-t{border-top-width:1px}.border-accent{border-color:var(--gh-c-accent)}.border-line{border-color:var(--gh-c-line)}.bg-transparent{background-color:transparent}.p-0{padding:0}.p-3{padding:.75rem}.px-0{padding-left:0;padding-right:0}.px-1{padding-left:.25rem;padding-right:.25rem}.px-1\.5{padding-left:6px;padding-right:6px}.px-2{padding-left:.5rem;padding-right:.5rem}.px-3{padding-left:.75rem;padding-right:.75rem}.py-0{padding-top:0;padding-bottom:0}.py-0\.5{padding-top:.125rem;padding-bottom:.125rem}.py-1{padding-top:.25rem;padding-bottom:.25rem}.py-1\.5{padding-top:6px;padding-bottom:6px}.py-7{padding-top:1.75rem;padding-bottom:1.75rem}.py-px{padding-top:1px;padding-bottom:1px}.pb-6{padding-bottom:1.5rem}.pl-8{padding-left:2rem}.text-center{text-align:center}.font-mono{font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,Liberation Mono,Courier New,monospace}.text-\[10px\]{font-size:10px}.text-\[11px\]{font-size:11px}.text-\[13px\]{font-size:13px}.text-meta{font-size:11px;line-height:14px}.text-row{font-size:13px;line-height:18px}.text-slug{font-size:16px;line-height:22px;font-weight:600}.text-sub{font-size:12px;line-height:16px}.font-medium{font-weight:500}.font-semibold{font-weight:600}.uppercase{text-transform:uppercase}.italic{font-style:italic}.leading-4{line-height:1rem}.leading-\[14px\]{line-height:14px}.leading-\[15px\]{line-height:15px}.leading-none{line-height:1}.text-accent{color:var(--gh-c-accent)}.text-fg-primary{color:var(--gh-c-fg)}.text-inherit{color:inherit}.underline{text-decoration-line:underline}.outline{outline-style:solid}.blur{--tw-blur:blur(8px)}.blur,.filter{filter:var(--tw-blur) var(--tw-brightness) var(--tw-contrast) var(--tw-grayscale) var(--tw-hue-rotate) var(--tw-invert) var(--tw-saturate) var(--tw-sepia) var(--tw-drop-shadow)}.backdrop-filter{-webkit-backdrop-filter:var(--tw-backdrop-blur) var(--tw-backdrop-brightness) var(--tw-backdrop-contrast) var(--tw-backdrop-grayscale) var(--tw-backdrop-hue-rotate) var(--tw-backdrop-invert) var(--tw-backdrop-opacity) var(--tw-backdrop-saturate) var(--tw-backdrop-sepia);backdrop-filter:var(--tw-backdrop-blur) var(--tw-backdrop-brightness) var(--tw-backdrop-contrast) var(--tw-backdrop-grayscale) var(--tw-backdrop-hue-rotate) var(--tw-backdrop-invert) var(--tw-backdrop-opacity) var(--tw-backdrop-saturate) var(--tw-backdrop-sepia)}.transition{transition-property:color,background-color,border-color,text-decoration-color,fill,stroke,opacity,box-shadow,transform,filter,-webkit-backdrop-filter;transition-property:color,background-color,border-color,text-decoration-color,fill,stroke,opacity,box-shadow,transform,filter,backdrop-filter;transition-property:color,background-color,border-color,text-decoration-color,fill,stroke,opacity,box-shadow,transform,filter,backdrop-filter,-webkit-backdrop-filter;transition-timing-function:cubic-bezier(.4,0,.2,1);transition-duration:.15s}
+
+</style></head><body data-ds-dark-theme="true">
+<div class="gh2-panel">
+  <div class="gh2-card">
+    <div class="gh2-card-top">
+      <span class="gh2-repo-mark">⌘</span>
+      <a class="gh2-slug" href="#">acme/demo-ios</a>
+      <button class="gh2-icon-btn" title="在内部浏览器打开">↗</button>
+    </div>
+    <div class="gh2-card-meta">
+      <span class="gh2-branch">feature/ios-list-line-refresh-0.1.61</span>
+      <span class="gh2-sync">↑2 ↓0</span>
+      <span class="gh2-sync">±3</span>
+      <select class="dsh-github-repo-select"><option>ios-client</option></select>
+      <span class="dsh-github-badge" style="font-size:11px">手动</span>
+    </div>
+    <div style="font-size:12px;color:var(--dsw-alias-label-secondary,#57606a);padding-left:32px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">ios_kukipay · 共享卡额度字段识别修复</div>
+    <details class="gh2-details"><summary>@zengxiaolou</summary>
+      <div class="gh2-details-body"><div>仓库根: …/demo-workspace/ios-client</div><div>绑定方式: 手动</div></div>
+    </details>
+  </div>
+
+  <div class="gh2-segments">
+    <button class="gh2-segment">Git</button>
+    <button class="gh2-segment">未提交 <span class="gh2-count">3</span></button>
+    <button class="gh2-segment gh2-segment--active">PR <span class="gh2-count">2</span></button>
+    <button class="gh2-segment">Issues <span class="gh2-count">10</span></button>
+    <button class="gh2-segment">Actions <span class="gh2-count">5</span></button>
+  </div>
+
+  <div>
+    <div class="gh2-section-head"><h3 class="gh2-section-title">Pull requests</h3><span class="gh2-section-count">2</span></div>
+    <div class="gh2-list">
+      
+  <div class="gh2-row">
+    <span class="gh2-dot gh2-dot--ok">●</span>
+    <div class="gh2-row-main">
+      <div class="gh2-row-title"><span class="gh2-prefix">#3934</span><a href="#">chore(dev): 回刷共享卡额度字段识别修复（#3931）</a></div>
+      <div class="gh2-row-sub"><span class="gh-mono">chore/ios-list-line→release/0.1.61</span></div>
+    </div>
+    <div class="gh2-row-slot">
+      <span class="gh2-row-slot-time">7小时前</span>
+      <span class="gh2-chip gh2-chip--ok">可合并</span>
+      <button class="gh2-icon-btn gh2-row-slot-btn">✓</button>
+    </div>
+  </div>
+      
+  <div class="gh2-row">
+    <span class="gh2-dot gh2-dot--bad">✕</span>
+    <div class="gh2-row-main">
+      <div class="gh2-row-title"><span class="gh2-prefix">#3921</span><a href="#">feat: 支付渠道限额校验</a></div>
+      <div class="gh2-row-sub"><span class="gh-mono">feat/pay-limit→main</span></div>
+    </div>
+    <div class="gh2-row-slot">
+      <span class="gh2-row-slot-time">昨天</span>
+      <span class="gh2-chip gh2-chip--bad">CI 失败</span>
+      <button class="gh2-icon-btn gh2-row-slot-btn">✓</button>
+    </div>
+  </div>
+    </div>
+  </div>
+
+  <div>
+    <div class="gh2-section-head"><h3 class="gh2-section-title">Actions</h3><span class="gh2-section-count">5</span></div>
+    <div class="gh2-list">
+      
+  <div class="gh2-row">
+    <span class="gh2-dot gh2-dot--ok">●</span>
+    <div class="gh2-row-main">
+      <div class="gh2-row-title"><a href="#">VCC Activation Resolution Tests</a></div>
+      <div class="gh2-row-sub"><span class="gh-mono">hotfix/ios-list-line-refresh-0.1.61</span><span class="">2 次</span></div>
+    </div>
+    <div class="gh2-row-slot">
+      <span class="gh2-row-slot-time">7小时前</span>
+      <span class="gh2-chip gh2-chip--ok">成功</span>
+      <button class="gh2-icon-btn gh2-row-slot-btn">↗</button>
+    </div>
+  </div>
+      
+  <div class="gh2-row">
+    <span class="gh2-dot gh2-dot--idle">⊘</span>
+    <div class="gh2-row-main">
+      <div class="gh2-row-title"><a href="#">VCC Cancellation Tests</a></div>
+      <div class="gh2-row-sub"><span class="gh-mono">hotfix/ios-list-line-refresh-0.1.61</span></div>
+    </div>
+    <div class="gh2-row-slot">
+      <span class="gh2-row-slot-time">7小时前</span>
+      <span class="gh2-chip gh2-chip--idle">已取消</span>
+      <button class="gh2-icon-btn gh2-row-slot-btn">↗</button>
+    </div>
+  </div>
+      
+  <div class="gh2-row">
+    <span class="gh2-dot gh2-dot--busy">○</span>
+    <div class="gh2-row-main">
+      <div class="gh2-row-title"><a href="#">VCC Submission History Tests</a></div>
+      <div class="gh2-row-sub"><span class="gh-mono">feature/ios-list-line-refresh</span><span class="">3 次</span></div>
+    </div>
+    <div class="gh2-row-slot">
+      <span class="gh2-row-slot-time">3分钟前</span>
+      <span class="gh2-chip gh2-chip--busy">运行中</span>
+      <button class="gh2-icon-btn gh2-row-slot-btn">↗</button>
+    </div>
+  </div>
+    </div>
+  </div>
+
+  <div class="gh2-quick">
+    <button class="gh2-quick-btn">新建 PR</button>
+    <button class="gh2-quick-btn">新建 Issue</button>
+    <button class="gh2-quick-btn">全部 PR</button>
+    <button class="gh2-quick-btn">全部 Issues</button>
+  </div>
+</div></body></html>

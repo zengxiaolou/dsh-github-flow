@@ -37,6 +37,20 @@ export interface PluginConfig {
    * 注意：放在 Cordis Config 意味着修改此项会触发插件 reload（静态默认值，可接受）。
    */
   proxyUrl?: string;
+  /**
+   * 仓库发现策略，默认 'strict'。
+   *
+   * - 'strict'：工作区必须自身是 Git 仓库根；聚合根目录（本身不是仓库、子目录里挂着
+   *   若干仓库）判定为「未关联」——与上游语义一致，绝不借用子项目的仓库。
+   * - 'aggregate'：在 strict 之上增加两级兜底——向上回溯祖先目录、向下扫描一层子仓库，
+   *   让「一个大目录下多个仓库」的开发方式也能绑定到具体仓库。
+   *   解析不到时仍返回「未关联」空状态，不伪造仓库。
+   */
+  repoDiscovery?: 'strict' | 'aggregate';
+  /** aggregate 模式下最多向上回溯的层数，默认 3 */
+  upwardSearchLevels?: number;
+  /** aggregate 模式下向下扫描子仓库的深度，默认 1 */
+  childScanDepth?: number;
 }
 
 /** 数据同步与自动化感知偏好配置 */
@@ -82,14 +96,6 @@ export interface GhResult<T = unknown> {
   truncated?: boolean;
   /** 二进制模式下的字节长度（data 为 Buffer 时存在） */
   binaryBytes?: number;
-  /**
-   * 失败语义分类（仅 ok=false 时存在）。
-   *
-   * 为什么挂在结果上而不是让调用方自己 parse error 文本：调用方散落在
-   * 各工具与路由里，重复实现文本匹配必然漂移；分类规则只应有一份事实源
-   * （src/executor/error-classifier.ts）。上层据此决定「重试 / 回退快照 / 直接降级」。
-   */
-  errorKind?: 'transient' | 'deterministic' | 'unknown';
 }
 
 export interface AuthInstallGuide {
@@ -122,30 +128,6 @@ export interface AuthStatus {
   hasLocalToken?: boolean;
 }
 
-/**
- * 当前账号对仓库的权限档位（gh `viewerPermission` 字段的取值域）。
- * 只读（READ / TRIAGE）意味着任何写操作都会被 GitHub 拒绝，
- * UI 应据此在操作前给出提示，而不是让用户点了才吃 403。
- */
-export type ViewerPermission = 'ADMIN' | 'MAINTAIN' | 'WRITE' | 'TRIAGE' | 'READ';
-
-/**
- * 工作区的远程布局分类（离线解析得出，用于确定「该用哪个 remote 的身份」）。
- *
- * 为什么要分类：混合布局下若按 `.git/config` 的书写顺序选 remote，
- * 同一个工作区在两次 `git remote` 操作后可能解析出不同仓库。
- * 分类后每种布局的处置规则固定，与书写顺序无关。
- */
-export type RepoLayoutKind =
-  /** 全部 remote 都是 github.com */
-  | 'github-only'
-  /** 含 GitHub remote，但 git 选中的那个不是 GitHub */
-  | 'github-mixed'
-  /** 无任何 GitHub remote（全 GHE 或其他 host） */
-  | 'no-github'
-  /** 无 remote */
-  | 'no-remote';
-
 export interface RepoMetadata {
   nameWithOwner: string;
   name: string;
@@ -157,21 +139,6 @@ export interface RepoMetadata {
   url?: string;
   stargazerCount?: number;
   forkCount?: number;
-  /** 是否为 fork（影响 star 取谁、是否提示可查看上游） */
-  isFork?: boolean;
-  /**
-   * fork 的上游。
-   * gh 的 `parent` 只返回骨架（id/name/owner.login），nameWithOwner 需自行拼接；
-   * 上游 star 数拿不到（`--json` 不支持嵌套子字段），故此处不含热度字段。
-   */
-  parent?: { nameWithOwner: string; url?: string };
-  /**
-   * 当前账号对该仓库的权限。
-   * 离线解析时为 undefined——**不猜测**：猜错会导致 UI 给出错误的操作许可。
-   */
-  viewerPermission?: ViewerPermission;
-  /** 远程布局分类（仅离线解析产生，供 UI 与诊断区分场景） */
-  layout?: RepoLayoutKind;
 }
 
 /** Git 分支详情项（供分支切换器下拉列表消费） */
@@ -297,6 +264,17 @@ export interface WorkflowRunItem {
 export interface GitHubOverviewData {
   auth: AuthStatus;
   repo?: RepoMetadata;
+  /**
+   * 聚合根（repoDiscovery='aggregate'）场景下的全部候选仓库绝对路径。
+   * 长度 > 1 时面板渲染「手动切换仓库」下拉框；长度 <= 1 时不渲染。
+   */
+  repoCandidates?: string[];
+  /** 当前实际绑定的仓库根绝对路径 */
+  repoRoot?: string;
+  /** 该仓库根是怎么来的：self/ancestor/child/manual（manual = 用户手动选过） */
+  repoVia?: string;
+  /** 会话/请求的原始工作区路径（aggregate 下与 repoRoot 不同） */
+  workspacePath?: string;
   pullRequests: PrItem[];
   issues: IssueItem[];
   issueStats?: IssueStats;
@@ -307,14 +285,6 @@ export interface GitHubOverviewData {
   networkError?: boolean;
   /** 网络异常的原因或提示 */
   networkErrorReason?: string;
-  /**
-   * 确定性降级说明（非错误）。
-   *
-   * 为什么与 networkError 分开：仓库关闭 Issues、未启用 Discussions 这类
-   * 「配置事实」不是故障，不该触发网络告警横幅与重试。它们只需要在面板上
-   * 安静地说明一句「该仓库未开启 Issues」，让用户知道空列表是正常的。
-   */
-  notices?: string[];
   /** 插件版本与升级信息（由内存缓存快速读取，不阻塞首屏业务） */
   updateInfo?: UpdateInfo;
   /** 本地 Git 状态（ahead/behind/dirty，remote-tracking 快照语义）；非 Git 工作区为 undefined */
@@ -385,11 +355,6 @@ export interface GlobalOverviewData {
   networkErrorReason?: string;
   /** 工作区矩阵读取失败的原因。区分「没有工作区」与「读不到工作区」，避免把故障显示成空状态 */
   workspaceError?: string;
-  /**
-   * 确定性降级说明（非错误）：仓库关闭 Issues、未启用 Discussions 等配置事实。
-   * 与 networkError 互斥——它不是故障，不该触发告警横幅与重试。
-   */
-  notices?: string[];
   /** 插件版本与升级信息（由内存缓存快速读取，不阻塞首屏业务） */
   updateInfo?: UpdateInfo;
 }

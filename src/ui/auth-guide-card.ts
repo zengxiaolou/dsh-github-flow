@@ -11,6 +11,8 @@ export function AuthGuideCard(props: any) {
 
   var [copied, setCopied] = React.useState(false);
   var [launching, setLaunching] = React.useState(false);
+  // 唤起成功/复用后的短冷却：按钮锁 8 秒，避免用户连点把窗口点成一串
+  var [cooldown, setCooldown] = React.useState(false);
   var [toastMsg, setToastMsg] = React.useState(null as string | null);
 
   var isNetwork = Boolean(auth?.networkError);
@@ -44,6 +46,9 @@ export function AuthGuideCard(props: any) {
   };
 
   var launchTerminal = async (cmd: string) => {
+    // 防连点：一次唤起还没落定、或刚开过窗口时，重复点击直接把请求憋回去。
+    // 服务端还有冷却闸与认证态闸，这里只是省掉无意义的往返。
+    if (launching || cooldown) return;
     setLaunching(true);
     setToastMsg(null);
     try {
@@ -54,8 +59,12 @@ export function AuthGuideCard(props: any) {
       });
       var json = await res.json();
       if (json.ok) {
-        setToastMsg("已唤起系统终端，请在弹出窗口中完成操作；若未弹出，可手动打开终端执行上方命令");
-        setTimeout(() => setToastMsg(null), 6000);
+        // 服务端回 launched / reused / skipped 三态：如实转述，不要再统一说「已唤起」。
+        // reused 表示已有窗口在等输入，skipped 表示 gh 其实已登录——这两种都别再开新窗。
+        setToastMsg(json.message || "已唤起系统终端，请在弹出窗口中完成操作；若未弹出，可手动打开终端执行上方命令");
+        setCooldown(true);
+        setTimeout(function () { setCooldown(false); }, 8000);
+        setTimeout(function () { setToastMsg(null); }, 8000);
       } else {
         setToastMsg("❌ " + (json.message || "唤起失败，请手动打开终端执行上方命令"));
       }
@@ -177,10 +186,14 @@ export function AuthGuideCard(props: any) {
         {
           className: "dsh-github-action-btn",
           onClick: () => launchTerminal(defaultCmd),
-          disabled: launching,
-          title: "自动唤起系统终端并执行该命令"
+          disabled: launching || cooldown,
+          title: cooldown ? "刚唤起过终端，稍等几秒再试" : "自动唤起系统终端并执行该命令"
         },
-        launching ? "正在唤起..." : (isNetwork ? "💻 终端排查状态" : notInstalled ? "💻 唤起终端安装" : "💻 唤起终端登录")
+        launching
+          ? "正在唤起..."
+          : cooldown
+            ? "⏳ 已唤起，稍候"
+            : (isNetwork ? "💻 终端排查状态" : notInstalled ? "💻 唤起终端安装" : "💻 唤起终端登录")
       ),
       notInstalled
         ? h(

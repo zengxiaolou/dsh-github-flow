@@ -79,9 +79,10 @@ async function runTests() {
     // 2. 具备 Prompt 一键复制机制
     assert(builtClient.includes('一键复制 Prompt'), '界面必须提供一键复制 Prompt 按钮');
 
-    // 3. 全景驾驶舱浅入口直达独立大窗口
-    assert(builtClient.includes('isHelpModalOpen'), '全景主页必须包含大窗口打开状态');
-    assert(builtClient.includes('📖 使用指南'), '全景主页必须包含「📖 使用指南」直达按钮');
+    // 3. 全景驾驶舱已下线：它的浅入口（isHelpModalOpen / 📖 使用指南）必须一并消失，
+    //    避免「测试还要求一个已经不存在的界面」这种假契约。
+    assert(!builtClient.includes('GithubWorkspacePanel'), '全景驾驶舱组件不得再进 bundle');
+    assert(!builtClient.includes('isHelpModalOpen'), '全景主页的大窗口状态不得残留');
 
     // 4. 会话右侧栏浅入口直达独立大窗口
     assert(builtClient.includes('helpModalOpen'), '会话右侧栏必须包含独立大窗口状态');
@@ -160,10 +161,14 @@ async function runTests() {
     }
   });
 
-  test('架构隔离铁律：本地 Git 监控仅在右侧栏挂载，首页（全景驾驶舱）坚决不开启文件监控', () => {
-    // 读取右侧栏与全景主页的代码段
-    const rightbarCode = builtClient.slice(builtClient.indexOf('function GithubRightbarBody'), builtClient.indexOf('function GithubWorkspacePanel'));
-    const panelCode = builtClient.slice(builtClient.indexOf('function GithubWorkspacePanel'));
+  test('架构隔离铁律：本地 Git 监控仅在右侧栏挂载，会话 PR 面板坚决不开启文件监控', () => {
+    // 全景驾驶舱已在 2026-10-20 下线（入口与面板一并移除），这里改为：
+    // 右侧栏段落 = GithubRightbarBody 到 apply；会话 PR 面板段落 = 它的打包段标记之间。
+    const rightbarCode = builtClient.slice(builtClient.indexOf('function GithubRightbarBody'), builtClient.indexOf('function apply(ctx)'));
+    const panelStart = builtClient.indexOf('// ---- [Bundled: session-pr-panel.js] ----');
+    const panelCode = panelStart >= 0
+      ? builtClient.slice(panelStart, builtClient.indexOf('// ---- [Bundled: sync-settings-modal.js] ----', panelStart))
+      : '';
 
     // 右侧栏必须包含 git-watch 长轮询与 localGitWatch 条件
     assert(rightbarCode.includes('/api/github/git-watch'), '右侧栏必须挂载本地 git-watch 监听');
@@ -173,13 +178,13 @@ async function runTests() {
     assert(rightbarCode.includes('refreshLocalGit();'), 'git-watch changed 时必须局部调用 refreshLocalGit');
     assert(rightbarCode.includes('/api/github/local-git-status'), '前端包含 local-git-status 局部端点调用');
 
-    // 网络弹性：全景面板与右侧栏必须监听 window online 自愈
+    // 网络弹性：右侧栏必须监听 window online 自愈
     assert(rightbarCode.includes('addEventListener("online"'), '右侧栏必须监听 online 网络恢复自愈');
-    assert(panelCode.includes('addEventListener("online"'), '全景主页必须监听 online 网络恢复自愈');
 
-    // 首页（全景主页）坚决不包含任何 git-watch 调用
-    assert(!panelCode.includes('/api/github/git-watch'), '全景首页坚决不能包含任何 git-watch 调用，保持轻量');
-    assert(panelCode.includes('首页坚决不挂载任何文件监控'), '首页必须明确注释不挂载文件监控');
+    // 会话 PR 面板只读 GitHub 元数据，绝不挂文件监控（那边一开就是长轮询）
+    assert(panelCode.length > 0, '必须能定位会话 PR 面板段');
+    assert(!panelCode.includes('/api/github/git-watch'), '会话 PR 面板不得包含任何 git-watch 调用');
+    assert(!panelCode.includes('/api/github/local-git-status'), '会话 PR 面板不得包含 local-git-status 调用');
   });
 
   console.log('\n========================================');

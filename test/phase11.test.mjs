@@ -141,8 +141,10 @@ async function runTests() {
     const builtClient2 = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8');
 
     // 6.1 五 Tab 定义 + 计数徽章
+    // 断言跟着实现走：计数不再是拼进 label 的字符串，而是独立渲染的 .gh2-count 徽章
+    //（label 仍是纯文本，无障碍读屏与旧快照都靠这个 span 承载数字）。
     assert(clientSrc.includes('key: "prs"') && clientSrc.includes('key: "issues"') && clientSrc.includes('key: "runs"') && clientSrc.includes('key: "git"') && clientSrc.includes('key: "dirty"'), 'five tab keys defined');
-    assert(clientSrc.includes('t.count !== null ? `${t.label} (${t.count})` : t.label'), 'tab labels carry counts');
+    assert(clientSrc.includes('className: "gh2-count"') && clientSrc.includes('String(t.count)'), 'tab labels carry counts (count badge span)');
 
     // 6.2 DOM 级互斥：data-tab-page hidden + data-tab-btn active（无 React state）
     assert(clientSrc.includes('"data-tab-page"') && clientSrc.includes('"data-tab-btn"') && clientSrc.includes('data-active-tab'), 'DOM-level tab state via data-* attributes');

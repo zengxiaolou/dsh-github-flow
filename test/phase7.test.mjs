@@ -61,7 +61,10 @@ console.log('\n--- 2. linux detection chain ---');
 console.log('\n--- 3. honest failure reporting ---');
 {
   const src = readFileSync('src/api/routes-actions.ts', 'utf8');
-  assert(src.includes('launchTerminalAndWait') && src.includes('await launchTerminalAndWait'), 'open_terminal 等待真实结果再回传');
+  // 2026-10-20 起 open_terminal 不再直接 spawn，而是走 requestTerminalLaunch 的受控唤起：
+  // 「等真实结果再回传」的语义没变（内部 await launcher 结果），外面多了认证态/在途/冷却三道去重闸。
+  assert(src.includes('await requestTerminalLaunch(command'), 'open_terminal 等待受控唤起的真实结果再回传');
+  assert(src.includes('function launchTerminalAndWait'), '真实唤起实现仍是 launchTerminalAndWait');
   assert(src.includes('唤起终端失败：'), '失败响应含原因文案');
   assert(src.includes('请手动打开系统终端执行'), '失败响应含手动出路');
   // 旧的 fire-and-forget + 假成功模式必须消失
@@ -99,28 +102,31 @@ console.log('\n--- 4. route e2e (mock) ---');
     assert(status === 500 && json.ok === false && /不支持唤起/.test(json.error || json.message || ''), '非白名单命令被拒绝');
   }
 
-  // 4.2 合法命令（Windows 本机真实唤起会弹窗——stdio ignore 后 cmd start 亚秒返回，
-  //     close 事件异步到达，需轮询等待响应而非同步断言）
+  // 4.2 合法命令 + 已登录 → 认证态闸拦截：返回 skipped 且**不真的开窗**。
+  //     旧版这里会真的 popup 一个 Terminal 跑 `gh auth login`：每跑一次测试就多一个
+  //     永远卡在 `Where do you use GitHub?` 的窗口——「窗口风暴」的来源之一。真实
+  //     spawn 的成败语义改由 phase30 用注入式 launcher 覆盖，无需真开窗。
   {
     let status = 0, body = '';
     const res = { setHeader() {}, end(d) { body = d; }, get statusCode() { return status; }, set statusCode(v) { status = v; } };
+    // 该用例把认证态翻成「已登录」，让闸 1 生效（同一 executor 实例被路由闭包持有）
+    mockExec.checkAuth = async () => ({ installed: true, loggedIn: true, user: 'tester' });
     const payload = JSON.stringify({ action: 'open_terminal', command: 'gh auth login' });
     const req2 = { method: 'POST', on(ev, cb) { if (ev === 'data') cb(payload); if (ev === 'end') cb(); } };
     await handler(req2, res);
-    // 响应经 spawn close 异步到达：最多等 12s（后端兜底 10s + 余量）
     for (let i = 0; i < 120 && !body; i++) {
       await new Promise((r) => setTimeout(r, 100));
     }
     assert(body, 'open_terminal 响应最终到达（不悬挂）');
     const json = JSON.parse(body);
-    // 真实环境：ok:true（终端已弹出）或 ok:false+原因（如沙箱 EPERM）——两者都是「如实」，不能是恒真
-    if (json.ok === true) {
-      assert(json.message === '已唤起系统终端', '成功响应语义正确');
-    } else {
-      // 失败如实回传：沙箱 spawn EPERM 走的是 catch 分支（error 字段），真实终端缺失走 message 分支——两者都算「如实」
-      const msg = json.message || json.error || '';
-      assert(status === 500 && (msg.includes('唤起终端失败') || msg.includes('EPERM') || msg.includes('失败')), `失败如实回传（沙箱环境预期）: ${msg.slice(0, 60)}`);
-    }
+    assert(status === 200 && json.ok === true, '已登录时接口返回成功语义');
+    assert(json.status === 'skipped' && json.skipped === true, '状态为 skipped（认证态闸生效）');
+    assert(/已登录/.test(json.message || ''), `文案说明「已登录，无需再执行」: ${(json.message || '').slice(0, 40)}`);
+  }
+  {
+    // 4.3 白名单内的安装类命令不受认证闸影响：仍走真实唤起路径（此处只验不再被 skipped 逻辑误拦）
+    const src2 = readFileSync('src/api/routes-actions.ts', 'utf8');
+    assert(/command === 'gh auth login' && options\.authCheck/.test(src2), '认证态闸只作用于 gh auth login，不误伤安装命令');
   }
 }
 
@@ -138,20 +144,21 @@ console.log('\n--- 6. update check parallelization ---');
   const cs = readFileSync('lib/client.js', 'utf8');
   // 原缺陷：useEffect(..., [data]) + if (!data) return 导致 check-update 串行等待
   // gh 概览（5~19s），且 gh 冷启动失败时 data 恒空、横幅永不出。修复后挂载/开窗即触发。
-  // 触发点三处：右侧栏 + 全景主页（并行化）+ 设置弹窗「关于」分区版本号（开窗即取，同语义）。
+  // 触发点两处：右侧栏 + 设置弹窗「关于」分区版本号（开窗即取，同语义）。
+  // 全景主页那一处随驾驶舱下线一并移除。
   const gates = cs.split('fetch("/api/github/check-update")').length - 1;
-  assert(gates === 3, `check-update 恰好三处触发点（实际: ${gates}）`);
+  assert(gates === 2, `check-update 恰好两处触发点（实际: ${gates}）`);
   const gatedPatterns = [
     /if \(!data\) return;\s*\n\s*var timer = setTimeout\(function \(\) \{\s*\n\s*fetch\("\/api\/github\/check-update"\)/,
   ];
   for (const re of gatedPatterns) {
     assert(!re.test(cs), `不再存在 data 门控的 check-update: ${re.source.slice(0, 50)}`);
   }
-  // 空依赖挂载（[], 300ms 微延迟）形态应出现两次：fetch 后 ~275 字符处收尾 "}, 300);"（放宽至 350 容错）
+  // 全景驾驶舱已下线：只剩右侧栏这一处「挂载即触发」的 check-update（[], 300ms 微延迟）
   const parallelCount = (cs.match(/fetch\("\/api\/github\/check-update"\)[\s\S]{0,350}?\}, 300\);/g) || []).length;
-  assert(parallelCount === 2, `两处 check-update 均为挂载即触发（实际: ${parallelCount}）`);
+  assert(parallelCount === 1, `右侧栏 check-update 必须挂载即触发（实际: ${parallelCount}）`);
   const mountDepCount = (cs.match(/\}, 300\);[\s\S]{0,80}?\}, \[\]\);/g) || []).length;
-  assert(mountDepCount === 2, `两处 effect 依赖均为空数组 []（实际: ${mountDepCount}）`);
+  assert(mountDepCount === 1, `右侧栏 effect 依赖必须为空数组 []（实际: ${mountDepCount}）`);
 }
 
 // ---- 7. 更新设置分区 UI 锚点 ----
@@ -194,14 +201,15 @@ console.log('\n--- 7. update settings section ---');
   assert(cs.includes('当前版本: v'), '关于页展示当前版本号');
 
   // 插件身份标识锚点：界面用 GitHub 官方 Octocat 做功能图标，新用户易误认为
-  // 官方功能——两处面板标题（右侧栏/工作台共用渲染 + 驾驶舱）必须带「插件」徽标
+  // 官方功能——右侧栏标题必须带「插件」徽标（驾驶舱已下线）
   assert(cs.includes('function renderPluginBadge('), '插件身份徽标组件存在');
-  assert((cs.match(/renderPluginBadge\(h\)/g) || []).length === 2, `两处标题渲染函数调用身份徽标（实际: ${(cs.match(/renderPluginBadge\(h\)/g) || []).length}）`);
+  assert((cs.match(/renderPluginBadge\(h\)/g) || []).length >= 1, `右侧栏标题渲染函数调用身份徽标（实际: ${(cs.match(/renderPluginBadge\(h\)/g) || []).length}）`);
   assert(cs.includes('data-ds-dark-theme] .dsh-github-plugin-badge'), '徽标含暗色主题适配');
   assert(cs.includes('dsh-github-flow 插件'), 'tab/tooltip 文案注明插件身份');
   // 徽标交互语义：点击打开「关于」弹窗而非直接跳仓库（事件派发 + initialSection 直开 about）
   assert(cs.includes('dsh-github-open-about'), '徽标点击派发 open-about 事件');
-  assert((cs.match(/addEventListener\("dsh-github-open-about"/g) || []).length === 2, '两个宿主面板都监听徽标事件');
+  // 全景驾驶舱已下线：只剩右侧栏这一个宿主面板监听徽标事件
+  assert((cs.match(/addEventListener\("dsh-github-open-about"/g) || []).length >= 1, '右侧栏宿主面板监听徽标事件');
   assert(cs.includes('initialSection: "about"'), '徽标路径直开关于分区');
   assert(!cs.includes('href: "https://github.com/ItQianChen/dsh-github-flow",\n        target: "_blank"'), '徽标不再直跳仓库');
   // 右侧栏设置按钮：复用主页设置弹窗（onOpenSettings 回调 + 完整 save/clear 接线）
@@ -222,14 +230,14 @@ console.log('\n--- 8. fetch timeout guards ---');
   // 8.1 refresh 预置请求必须绑定 signal（原缺陷：挂起时 loading 永不清除）
   const refreshCalls = (cs.match(/fetch\("\/api\/github\/refresh"[^)]*\)/g) || []).length;
   const guardedRefresh = (cs.match(/fetch\("\/api\/github\/refresh", \{ method: "POST", signal: controller\.signal \}\)/g) || []).length;
-  assert(refreshCalls === 2 && guardedRefresh === 2, `两处 refresh 预置请求均绑定 signal（实际: ${guardedRefresh}/${refreshCalls}）`);
+  assert(refreshCalls === 1 && guardedRefresh === 1, `右侧栏 refresh 预置请求必须绑定 signal（实际: ${guardedRefresh}/${refreshCalls}）`);
   // 8.2 右侧栏 loadData 必须有 AbortController + 45s（原先完全没有）
   assert(cs.includes('signal: controller.signal'), '右侧栏 overview fetch 绑定 signal');
-  assert((cs.match(/\}, 45000\);/g) || []).length === 2, `两处 loadData 均有 45 秒超时定时器（实际: ${(cs.match(/\}, 45000\);/g) || []).length}）`);
+  assert((cs.match(/\}, 45000\);/g) || []).length === 1, `右侧栏 loadData 必须有 45 秒超时定时器（实际: ${(cs.match(/\}, 45000\);/g) || []).length}）`);
   // 8.3 引导卡刷新按钮 10s 超时
   assert(cs.includes('probeController.abort(); }, 10000);'), 'AuthGuideCard 探测按钮 10s 超时');
   // 8.4 超时文案与实际一致（45 秒），不再有 30 秒的旧文案
-  assert(cs.includes('获取超时（45 秒）'), '超时文案为 45 秒');
+  assert(cs.includes('网络连接超时 (45 秒)'), '超时文案为 45 秒');
   assert(!cs.includes('获取超时（30 秒）'), '旧 30 秒文案已清除');
 }
 

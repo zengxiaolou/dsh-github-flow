@@ -1,13 +1,11 @@
+import type { RepoRootResolution } from './workspace.js';
 import type { GhExecutionOptions, GhResult, AuthStatus, RepoMetadata, PluginConfig, GitLocalStatus, GitCommitLog, GitCommitEntry, GitBranchesResult } from './types.js';
 import type { ProxyManager } from './proxy.js';
 import { parseGhVersion, compareGhVersions } from './executor/version-utils.js';
 import { spawnWithStdin, safeSlice, cutByUtf8Bytes, truncateOutput } from './executor/process-utils.js';
-import { parseGitStatusOutput, parseGitLogLines, parseGitBranchLines, parseUncommittedDiff, parseGitStatText, parseRemoteUrls, parseGitConfig, resolveRemoteTarget, parseGithubUrl, parseRemoteHost, classifyRepoLayout, pickGithubRemote } from './executor/git-parser.js';
-import type { ParsedGitConfig, ParsedRemote } from './executor/git-parser.js';
+import { parseGitStatusOutput, parseGitLogLines, parseGitBranchLines, parseUncommittedDiff, parseGitStatText } from './executor/git-parser.js';
 import { getPlatformInstallGuide, getGhUpgradeHint } from './executor/platform-guide.js';
-import { classifyGhError, describeDeterministicError, isRetryableError, type GhErrorKind } from './executor/error-classifier.js';
-export { parseGhVersion, compareGhVersions, spawnWithStdin, safeSlice, cutByUtf8Bytes, truncateOutput, parseGitStatusOutput, parseGitLogLines, parseGitBranchLines, parseUncommittedDiff, parseGitStatText, parseRemoteUrls, parseGitConfig, resolveRemoteTarget, parseGithubUrl, parseRemoteHost, classifyRepoLayout, pickGithubRemote, getPlatformInstallGuide, getGhUpgradeHint, classifyGhError, describeDeterministicError, isRetryableError, };
-export type { GhErrorKind, ParsedGitConfig, ParsedRemote };
+export { parseGhVersion, compareGhVersions, spawnWithStdin, safeSlice, cutByUtf8Bytes, truncateOutput, parseGitStatusOutput, parseGitLogLines, parseGitBranchLines, parseUncommittedDiff, parseGitStatText, getPlatformInstallGuide, getGhUpgradeHint, };
 export declare class GhExecutor {
     ghPath: string;
     defaultTimeoutMs: number;
@@ -41,8 +39,21 @@ export declare class GhExecutor {
      * 探测失败/未安装时不落缓存，用户装好 gh 后下一次探测立即生效。
      */
     private ghVersionCache;
+    /**
+     * 仓库发现策略（默认 'strict'，与上游语义一致）。
+     * 置为 'aggregate' 后，工作区可以是一个「聚合根」：自身不是仓库时，先向上回溯祖先，
+     * 再向下扫描子仓库并确定性选中最近活跃的那个。挂在 executor 是因为所有 gh/git 调用
+     * 都要经过 resolveWorkspaceCwd 这一个咽喉，策略集中在此才不会有第二处判定漂移。
+     */
+    repoDiscovery: 'strict' | 'aggregate';
+    /** aggregate 下最多向上回溯的层数 */
+    upwardSearchLevels: number;
+    /** aggregate 下向下扫描子仓库的深度 */
+    childScanDepth: number;
     constructor(config?: PluginConfig);
     updateConfig(config?: PluginConfig): void;
+    /** 仓库发现选项：策略与搜索深度集中一处，避免调用方各传一份而产生分歧 */
+    private repoDiscoveryOptions;
     /** 注入代理管理器（main.ts 装配时调用一次；测试可注入 mock） */
     attachProxyManager(manager: ProxyManager): void;
     /**
@@ -52,8 +63,41 @@ export declare class GhExecutor {
      *    绝不递归扫描子目录、绝不越权篡改；无 Git 目录则让下游探测真实反映无 Git 状态；
      * 2. 仅在未显式指定 cwd 时，才尝试使用 sessionId 或环境变量 DSH_SESSION_ID 反查工作区；
      * 3. 仅在完全未指定 cwd 且无会话时（全局命令行调用），才兜底回退到最近活跃的 Git 工作区或 process.cwd()。
+     *
+     * 唯一例外是显式开启的 repoDiscovery='aggregate'：此时在上述基准目录之上再做一次
+     * 「聚合根 → 具体仓库」的解析（见 resolveWorkspaceRepoRoot）。默认 'strict' 下
+     * 此函数行为与上游逐字符一致，绝不借用子项目的仓库。
      */
     resolveWorkspaceCwd(explicitCwd?: string, explicitSessionId?: string): string;
+    /**
+     * 把工作区路径解析为「真正可以跑 gh/git 的仓库根」。
+     *
+     * 为什么需要它：routes 层在调用 executor 之前就要判断「这个工作区能不能用」，
+     * 若各路由自行 hasGitDir(cwd) 判定，聚合根模式下会与 resolveWorkspaceCwd 的
+     * 结果产生两套 cwd（同一个请求里缓存键与 gh 执行目录不一致）。因此判定口径
+     * 统一收敛到这一个方法。
+     *
+     * @returns 解析成功返回 root/via/candidates；strict 下非仓库根、或 aggregate 下
+     *          三级探测都落空时返回 null（调用方据此返回「未关联」空状态）。
+     */
+    resolveWorkspaceRepoRoot(explicitCwd?: string, explicitSessionId?: string): RepoRootResolution | null;
+    /**
+     * 手动指定某个工作区应绑定哪个仓库（聚合根场景）。
+     *
+     * 只接受「候选集里真实存在且确实是仓库根」的路径：面板传来的值同样要过这道
+     * 校验，否则一个被篡改的请求就能让面板对任意目录跑 gh 命令。
+     *
+     * @param repoRoot 仓库根绝对路径；传 null 清除选择、恢复自动选择
+     */
+    selectWorkspaceRepo(workspacePath: string, repoRoot: string | null): {
+        ok: true;
+        resolution: RepoRootResolution | null;
+    } | {
+        ok: false;
+        error: string;
+    };
+    /** 不含「仓库发现」的原始工作区路径解析（上游语义原样保留） */
+    private resolveWorkspaceBase;
     /**
      * 安全执行 gh 命令
      * 采用 execFile 参数数组隔离，彻底杜绝 Shell 字符串拼接注入漏洞
@@ -204,77 +248,13 @@ export declare class GhExecutor {
      */
     private probeAuth;
     /**
-     * 从 `refs/remotes/<remote>/HEAD` 符号引用中读取仓库默认分支。
-     *
-     * 为什么只认这一个来源（其余全部实测排除）：
-     *   - `packed-refs` 只存具体 sha，不含 symbolic ref —— 读不到；
-     *   - 当前 HEAD 指向的是**用户 checkout 的分支**，不是仓库默认分支，语义错误；
-     *   - 猜 main/master —— 无依据，宁可回落固定值也不猜。
-     *
-     * @returns 分支名；文件不存在（未 fetch 过）或内容不是符号引用时返回 null，
-     *          由调用方回落到既有默认值（保持原有行为，不引入新错误）
-     */
-    readDefaultBranchFromRef(remoteName: string, cwd?: string): string | null;
-    /**
-     * 解析工作区真实的 git 目录的**两个**路径：局部目录与共享仓库目录。
-     *
-     * 为什么必须分开：worktree 的 `HEAD` 在局部目录（`.git/worktrees/<name>/HEAD`），
-     * 而 `config` 在共享目录（`commondir` 指向处）。只解析其中一个必然读错：
-     *   - 只读局部 → 找不到 config（remote 配置在共享目录）
-     *   - 只读共享 → 拿到**主工作树**的分支名，进而按错误分支查 `branch.*.remote`
-     *
-     * 实测：主工作树 HEAD 是 `ref: refs/heads/master`，worktree 的是 `ref: refs/heads/feat`。
-     *
-     * 常规仓库两者指向同一目录。
-     *
-     * @returns 两个绝对路径；非 Git 目录/指针不可解析时返回 null（绝不抛错）
-     */
-    resolveGitDirInfo(cwd?: string): {
-        localDir: string;
-        commonDir: string;
-    } | null;
-    /**
-     * 解析工作区真实的 git 目录（共享仓库目录）。
-     * 薄封装自 resolveGitDirInfo：读 `config` 的场景（远程指纹）只需要共享目录。
-     */
-    resolveGitDirPath(cwd?: string): string | null;
-    /**
-     * remote 配置指纹：全部 remote url 去重、排序、拼接后取 SHA-256 前 12 位。
-     *
-     * 为什么不用身份解析做缓存失效判定：身份解析要回答「变成了什么」，
-     * 一旦解析器对某种 config 布局有偏差（如双 remote 时取错 remote 段），
-     * 比对就永远失配——缓存再也不命中，每次请求都重拉全部 gh 子进程。
-     * 指纹只回答「变了没有」，不依赖任何语义理解，因此对该类偏差免疫。
-     *
-     * 反例（实测）：`git remote rename origin upstream` 后 `git remote add origin <fork>`，
-     * config 里 upstream 段排在 origin 段前，取「第一个 github.com 匹配」会拿到上游，
-     * 而 git 权威解析（branch.<name>.remote → origin）拿到的是 fork。
-     *
-     * @returns 12 位十六进制指纹；仅当「非 Git 目录 / config 不可读」时返回 null
-     *          （调用方据此保守判定为「未变更」，绝不因探测失败误清空缓存）。
-     *          注意：**config 可读但没有任何 remote 时返回的是空集合的哈希，不是 null**——
-     *          「仓库没有远程」是一个确定事实，它与「读不到配置」必须区分开：
-     *          否则用户删光 remote 后指纹恒为 null，旧快照再也无法失效。
-     */
-    getRemoteFingerprint(cwd?: string): string | null;
-    /**
-     * 读取并解析工作区的 git 远程视图（`.git/config` + `HEAD`）。
-     * 内部方法：把「两个路径各读哪个文件」的细节收敛在一处，
-     * 避免各调用点自己拼路径读错 worktree 的文件。
-     */
-    private readParsedGitConfig;
-    /**
-     * 仅从本地 `.git/config` 解析仓库身份，绝不发起网络请求。
+     * 仅从本地 .git/config 解析仓库身份，绝不发起网络请求。
      *
      * 为什么需要它：全局驾驶舱要为每个工作区认识别仓库，而 getRepoMetadata 会调用
      * `gh repo view` 走网络。实测 5 个工作区时该端点冷启动 20.5 秒，其中绝大部分耗在这 5 次
      * 网络往返上——而有界并发根本救不了它，因为瓶颈是网络延迟而不是进程排队。
      * 工作区矩阵只需要「这个目录属于哪个仓库」这一身份信息，本地 .git/config 已经完整具备，
      * 描述/star 数等富字段是当前仓库详情才需要的。这一步把每个工作区从 1 次网络往返降为 0。
-     *
-     * 解析口径与 git 一致（三级回落），不再「取 config 里第一个 github.com 匹配」——
-     * 后者在 `git remote rename origin upstream` + `add origin <fork>` 的布局下会取到上游，
-     * 而 git 认的是 origin（实测）。
      */
     getRepoIdentityFromLocal(cwd?: string): RepoMetadata | null;
     /**

@@ -65,6 +65,10 @@ export const Config = {
           updateCheckIntervalMs: typeof cfg.updateCheckIntervalMs === 'number' ? cfg.updateCheckIntervalMs : 86_400_000,
           registryUrl: typeof cfg.registryUrl === 'string' ? cfg.registryUrl : undefined,
           proxyUrl: typeof cfg.proxyUrl === 'string' ? cfg.proxyUrl : undefined,
+          // 仓库发现策略：'aggregate' 才开启聚合根适配，其余任何值一律回落 'strict'
+          repoDiscovery: cfg.repoDiscovery === 'aggregate' ? 'aggregate' : 'strict',
+          upwardSearchLevels: typeof cfg.upwardSearchLevels === 'number' ? cfg.upwardSearchLevels : 3,
+          childScanDepth: typeof cfg.childScanDepth === 'number' ? cfg.childScanDepth : 1,
         } as PluginConfig
       };
     }
