@@ -75,6 +75,14 @@ export interface GhExecutionOptions {
   /** 是否强制以纯文本形式返回，不进行 JSON 尝试解析 */
   rawText?: boolean;
   /**
+   * 本次调用的输出上限（字符）。默认走实例级 24k。
+   *
+   * 存在的理由：PR 详情这类结构化 JSON 一旦被截断就**无法解析**，executor 会
+   * 退回 rawText，调用方拿到 data:undefined——看起来成功、实际什么都没有。
+   * 结构化大对象必须显式提高上限，而不是让它悄悄降级。
+   */
+  maxOutputChars?: number;
+  /**
    * 二进制输出模式：stdout 保持 Buffer 原样返回（不做 UTF-8 转换与截断）。
    * 用于 gh api 下载图片/附件等字节流场景；GhResult.data 此时是 Buffer。
    */

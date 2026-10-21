@@ -110,6 +110,8 @@ window.__ModuleLoader__.load({
     /** 系统浏览器兜底（内部浏览器不可用时） */
     function openUrlFallback(url: string) {
       try {
+        // 兜底路径也要校验 scheme：window.open 对 javascript:/file: 并不安全
+        if (!/^https?:\/\//i.test(String(url || ""))) return;
         window.open(url, "_blank", "noopener,noreferrer");
       } catch (e) {
         /* 弹窗被拦截：无能为力，交给用户手点 */
@@ -138,7 +140,10 @@ window.__ModuleLoader__.load({
       try {
         var sidebarRight = ctx && typeof ctx.get === "function" ? ctx.get("sidebarRight") : null;
         if (sidebarRight && typeof sidebarRight.openTab === "function") {
-          sidebarRight.openTab("github-pr", { params: repo ? { repo: repo, number: number } : { number: number } });
+          // 用「仓库面板」那个类型（kind: github）承载 PR 面板：
+          // 单独注册的 github-pr 类型在某些页面状态下会变成 inactive，标签还在、内容却是空白。
+          // github 这个类型是工作区页面正在用的，天然激活；靠 params.number 分派到 PR 面板。
+          sidebarRight.openTab("github", { params: repo ? { repo: repo, number: number } : { number: number } });
           opened = true;
         }
         var layout = ctx && typeof ctx.get === "function" ? ctx.get("layout") : null;
@@ -153,6 +158,7 @@ window.__ModuleLoader__.load({
       if (!opened && repo) {
         openUrlSmartOrFallback("https://github.com/" + repo + "/pull/" + number);
       }
+      return opened;
     }
 
     /**
@@ -174,9 +180,20 @@ window.__ModuleLoader__.load({
             var target = ev.target as HTMLElement;
             var anchor = target && target.closest ? target.closest('a[href^="http"]') : null;
             if (!anchor) return;
-            if (!target.closest('[class*="dsh-github"]')) return;
             var href = anchor.getAttribute("href");
             if (!href) return;
+
+            // PR 链接优先落到「我们的 PR 面板」：聊天里点 #630 时，跳 GitHub 网页要等、
+            // 还可能因为内嵌浏览器登录态缺失而一直转圈——而面板读的是本地 gh，秒开。
+            // 想去看网页版就按住 Shift/⌘ 点击，那个分支不会走到这里。
+            var pr = href.match(/github\.com\/([A-Za-z0-9_][A-Za-z0-9_.-]*)\/([A-Za-z0-9_][A-Za-z0-9_.-]*)\/pull\/(\d+)/i);
+            if (pr && openSessionPrTab({ repo: pr[1] + "/" + pr[2], number: Number(pr[3]) })) {
+              ev.preventDefault();
+              return;
+            }
+
+            // 其余链接：只有本插件面板里的才走「内置浏览器优先」
+            if (!target.closest('[class*="dsh-github"]')) return;
             if (openUrlSmart(href)) ev.preventDefault();
           } catch (e) {
             // 拦截失败就走浏览器默认行为，绝不让它变成「点了没反应」
@@ -2228,19 +2245,51 @@ window.__ModuleLoader__.load({
         }, "github: session pr tab definition");
       }
 
+      /** 读当前 tab 的 params.number（读不到就当 0 = 仓库面板） */
+      function readTabNumber(props: any): number {
+        try {
+          var info = typeof (props && props.useTabInfo) === "function" ? props.useTabInfo() : null;
+          var params = info && info.tab && info.tab.navigation && info.tab.navigation.params;
+          return (params && Number(params.number)) || 0;
+        } catch (e) {
+          return 0;
+        }
+      }
+
+      /**
+       * 一个 tab 类型，两种内容：
+       * - params.number 存在 → 会话 PR 面板（从浮窗/PR 链接点进来）
+       * - 否则 → 仓库面板（左侧栏的历史入口）
+       *
+       * 为什么合并：单独注册的 github-pr 类型在部分页面状态下会 inactive，
+       * 表现为「标签在、内容空白」。用工作区正在用的 github 类型承载，不依赖二次注册。
+       */
+      function GithubTabBody(props: any) {
+        var number = readTabNumber(props);
+        return React.createElement(
+          number ? SessionPrPanel : GithubRightbarBody,
+          number ? Object.assign({}, props, { onOpenUrl: openUrlSmartOrFallback }) : props
+        );
+      }
+
+      function GithubTabTitleDef(props: any) {
+        var number = readTabNumber(props);
+        return React.createElement(number ? SessionPrTabTitle : GithubRightbarTitle, props);
+      }
+
       if (ctx.slots) {
         ctx.slots.inject("sidebar.right.pane.tab", () => {
           return ctx.slots.register({
             name: "sidebar.right.pane.tab",
             key: "dsh-github-flow",
-          }, GithubRightbarBody);
+          }, GithubTabBody);
         });
 
         ctx.slots.inject("sidebar.right.pane.tab.title", () => {
           return ctx.slots.register({
             name: "sidebar.right.pane.tab.title",
             key: "dsh-github-flow",
-          }, GithubRightbarTitle);
+          }, GithubTabTitleDef);
         });
 
         // ---- 会话 PR：浮窗 + 右列面板（本次改造的全部前端入口） ----
@@ -2250,7 +2299,7 @@ window.__ModuleLoader__.load({
             id: "github-session-pr",
             order: 70,
             label: "本会话 PR",
-          }, (props: any) => React.createElement(SessionPrOverlay, Object.assign({}, props, { onOpenPr: openSessionPrTab })));
+          }, (props: any) => React.createElement(SessionPrOverlay, Object.assign({}, props, { onOpenPr: openSessionPrTab, onOpenUrl: openUrlSmartOrFallback })));
         });
 
         ctx.slots.inject("sidebar.right.pane.tab", () => {

@@ -514,16 +514,16 @@ async function runTests() {
     const region = actionsSrc.slice(start, end);
 
     // 该路由块内所有 '--json', '<逗号分隔字段>' 组合
-    const lists = [...region.matchAll(/'--json'\s*,\s*'([^']+)'/g)].map((m) => m[1]);
-    assert(lists.length > 0, 'pr-detail 路由块必须包含 --json 字段列表');
-    const withBoth = lists.filter((l) => l.includes('autoMergeRequest') && l.includes('mergeStateStatus'));
-    assert.strictEqual(
-      withBoth.length,
-      1,
-      `详情字段列表必须含 autoMergeRequest 与 mergeStateStatus（命中 ${withBoth.length} 条）`,
+    // 字段表已抽成 coreFields 常量（thread 走独立请求），因此这里直接校验常量
+    const coreMatch = region.match(/const coreFields = '([^']+)'/);
+    assert(coreMatch, 'pr-detail 路由块必须声明 coreFields 字段常量');
+    const coreFields = coreMatch[1];
+    assert(
+      coreFields.includes('autoMergeRequest') && coreFields.includes('mergeStateStatus'),
+      'coreFields 必须含 autoMergeRequest 与 mergeStateStatus（按钮门控依赖它们）',
     );
 
-    const fields = withBoth[0].split(',');
+    const fields = coreFields.split(',');
     assert(fields.includes('autoMergeRequest'), 'autoMergeRequest 必须是独立字段名（面板据此判断自动合并已开启）');
     assert(fields.includes('mergeStateStatus'), 'mergeStateStatus 必须是独立字段名（面板据此禁用合并按钮）');
     assert(fields.includes('mergeable'), 'mergeable 仍须保留，避免合并态判断退化');

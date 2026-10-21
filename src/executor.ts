@@ -311,7 +311,8 @@ export class GhExecutor {
         rawOutput = errText.trim();
       }
 
-      const outcome = truncateOutput(rawOutput, this.maxOutputChars, this.maxOutputBytes);
+      const charCap = options.maxOutputChars && options.maxOutputChars > 0 ? options.maxOutputChars : this.maxOutputChars;
+      const outcome = truncateOutput(rawOutput, charCap, options.maxOutputChars ? charCap * 4 : this.maxOutputBytes);
       rawOutput = outcome.text;
       const truncated = outcome.truncated;
 

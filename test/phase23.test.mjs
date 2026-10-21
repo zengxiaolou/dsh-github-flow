@@ -568,13 +568,19 @@ async function runTests() {
     while ((m = re.exec(actionsSrc)) !== null) lists.push(m[1]);
     assert(lists.length > 0, 'routes-actions.js 至少应有一处 --json 字段表');
 
-    const withHead = lists.filter((list) => list.split(',').map((s) => s.trim()).includes('headRefOid'));
-    assert.strictEqual(withHead.length, 1, '必须恰有一处 --json 字段表带 headRefOid');
-    const fields = withHead[0].split(',').map((s) => s.trim());
-    for (const required of ['headRefName', 'headRefOid', 'files', 'commits', 'statusCheckRollup', 'reviewDecision']) {
-      assert(fields.includes(required), `--json 字段表必须包含 ${required}（前端据此渲染，缺一会退化成白屏）`);
+    // 2026-10-21：详情字段拆成 coreFields 常量 + withThread 分支（thread 单独请求），
+    // 因此字段表不再是单个字面量。这里把常量也纳入候选，并额外要求 thread 分支存在。
+    const coreMatch = actionsSrc.match(/const coreFields = '([^']+)'/);
+    assert(coreMatch, 'pr-detail 必须保留 coreFields 字段常量');
+    const coreFields = coreMatch[1].split(',').map((s) => s.trim());
+    for (const required of ['headRefName', 'headRefOid', 'statusCheckRollup', 'reviewDecision', 'mergeStateStatus', 'autoMergeRequest']) {
+      assert(coreFields.includes(required), `coreFields 必须包含 ${required}（前端据此渲染，缺一会退化成白屏）`);
     }
-    assert(!/\s/.test(withHead[0].replace(/,/g, '')), '--json 字段表不得含空格（gh 按逗号解析）');
+    assert(/withThread \? `\$\{coreFields\},commits,files,reviews,comments`/.test(actionsSrc),
+      'withThread 分支必须补上 commits/files/reviews/comments');
+    assert(actionsSrc.includes("'--json', 'reviews,comments,commits'"),
+      '/api/github/pr-thread 必须单独取 reviews,comments,commits');
+    assert(!/\s/.test(coreMatch[1].replace(/,/g, '')), '--json 字段表不得含空格（gh 按逗号解析）');
   });
 
   test('pr-detail 支持显式 repo query：显式 repo 时不再解析工作区仓库', () => {

@@ -15,6 +15,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import net from 'node:net';
 import { createRequire } from 'node:module';
 
 export interface ProxyConfig {
@@ -117,12 +118,75 @@ export class ProxyManager {
   private lastProbe: ProxyProbeResult | undefined;
   private fetchProxyAvailable = false;
   private activeDispatcherUrl: string | null = null;
+  /** 代理端口是否真的有人监听：null=还没探测过 */
+  private reachable: boolean | null = null;
+  private reachableAt = 0;
+  private reachableTimer: any = null;
   /** 安装代理 dispatcher 前的进程默认 dispatcher 快照（关闭代理时恢复，防残留） */
   private defaultDispatcher: unknown = null;
 
   constructor(presetUrl?: string) {
     this.load(presetUrl);
     this.applyFetchDispatcher();
+    this.scheduleReachability();
+  }
+
+  /**
+   * 后台探测代理端口是否可连，并每 60 秒复查。
+   *
+   * 为什么必须有：代理是「本机某个工具在监听」的假设。Clash 没开、端口改了、公司网下
+   * 代理不可用时，如果仍然把 HTTPS_PROXY 注入给 gh，**所有 gh 调用会直接 ECONNREFUSED**——
+   * 从「慢」变成「全挂」。这里探不到就退回直连，宁可慢也别报错。
+   */
+  private scheduleReachability(): void {
+    if (this.reachableTimer) return;
+    const tick = () => {
+      void this.probeReachable();
+    };
+    tick();
+    this.reachableTimer = setInterval(tick, 60_000);
+    // 不要因为一个探测定时器把宿主进程钉住
+    if (this.reachableTimer && typeof this.reachableTimer.unref === 'function') this.reachableTimer.unref();
+  }
+
+  private probeReachable(): Promise<void> {
+    const url = this.config.url;
+    if (!url) {
+      this.reachable = null;
+      this.reachableAt = Date.now();
+      return Promise.resolve();
+    }
+    let host = '';
+    let port = 0;
+    try {
+      const parsed = new URL(url);
+      host = parsed.hostname;
+      port = Number(parsed.port) || (parsed.protocol === 'https:' ? 443 : 80);
+    } catch {
+      this.reachable = false;
+      this.reachableAt = Date.now();
+      return Promise.resolve();
+    }
+    if (!host || !port) {
+      this.reachable = false;
+      this.reachableAt = Date.now();
+      return Promise.resolve();
+    }
+    return new Promise((resolve) => {
+      const socket = net.connect({ host, port, timeout: 800 });
+      let settled = false;
+      const done = (ok: boolean) => {
+        if (settled) return;
+        settled = true;
+        this.reachable = ok;
+        this.reachableAt = Date.now();
+        try { socket.destroy(); } catch { /* 忽略 */ }
+        resolve();
+      };
+      socket.once('connect', () => done(true));
+      socket.once('timeout', () => done(false));
+      socket.once('error', () => done(false));
+    });
   }
 
   /** 读取持久化文件；不存在时回落 cordis.patch.yml 预置值；再无则保持默认直连 */
@@ -179,6 +243,8 @@ export class ProxyManager {
   getEnv(scope: 'gh' | 'package-manager' = 'gh'): Record<string, string> {
     if (!this.config.url) return {};
     if (scope === 'package-manager' && !this.config.applyToPackageManager) return {};
+    // 端口探测失败（且是最近 2 分钟内的结论）→ 退回直连，避免把 gh 打成全挂
+    if (this.reachable === false && Date.now() - this.reachableAt < 120_000) return {};
     return {
       HTTPS_PROXY: this.config.url,
       HTTP_PROXY: this.config.url,
@@ -249,11 +315,19 @@ export class ProxyManager {
     };
     this.applyFetchDispatcher();
     this.lastProbe = undefined; // 配置变更后旧探测结果失效
+    // 换了代理地址就要重探端口：否则新地址一直用旧地址的可达性结论
+    this.reachable = null;
+    this.refreshReachability();
     this.persist();
     return { ok: true, state: this.snapshot() };
   }
 
   /** 经当前代理配置探测 GitHub API 连通性（2.5s 超时）。失败不回滚保存——离线预配置是合法场景 */
+  /** 配置变更后立刻重探端口，不用等下一个 60 秒周期 */
+  refreshReachability(): void {
+    void this.probeReachable();
+  }
+
   async probe(): Promise<ProxyProbeResult> {
     const started = Date.now();
     if (!this.config.url) {

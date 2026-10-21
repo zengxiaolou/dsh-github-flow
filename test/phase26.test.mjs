@@ -137,6 +137,20 @@ async function runTests() {
     assert(checkPromptSrc.includes('workflowName'), '有条件时必须带 workflow 名，便于区分同名检查');
     // 多条时用序号，单条时不加序号（否则单条提示词里会出现孤零零的「1)」）
     assert(checkPromptSrc.includes('list.length > 1'), 'fixCheckPrompt 必须区分单条 / 多条');
+    // 修完之后的事：推送 / 等重跑 / 重新请求评审 —— 只改代码不回推等于没修
+    assert(checkPromptSrc.includes('gh pr checks'), '必须给出确认检查状态的命令（gh pr checks）');
+    assert(checkPromptSrc.includes('gh run rerun'), '没有自动重跑时必须告诉用户怎么手动重跑');
+    assert(checkPromptSrc.includes('重新触发评审'), '必须说明修完要重新触发/请求评审');
+    assert(checkPromptSrc.includes('--add-reviewer'), '必须给出重新请求评审的具体命令');
+    assert(checkPromptSrc.includes('完成标准'), '必须写清完成标准（全绿 + 评审已重新请求）');
+    assert(checkPromptSrc.includes('headRefOid'), '必须带上当前 HEAD，避免在旧提交上改');
+    assert(checkPromptSrc.includes('isReviewGateCheck'), '必须区分「评审门禁」类检查与普通 CI 检查');
+  });
+
+  test('fixNotePrompt 也要带「回推 + 重新请求评审」的收尾步骤', () => {
+    assert(notePromptSrc.includes('新的 commit'), '评审意见只有落到新 commit 才算处理完');
+    assert(notePromptSrc.includes('--add-reviewer'), '单条分支要给出重新请求评审的命令');
+    assert(notePromptSrc.includes('resolve'), '要提醒把 review thread 回复并 resolve');
   });
 
   test('fixNotePrompt：单条分支与批量编号分支都在', () => {

@@ -25,6 +25,5 @@ export declare function splitDiffByFile(patch: string): Array<{
     additions: number;
     deletions: number;
 }>;
-/** markdown-lite：标题、无序/有序列表、围栏代码、段落 */
 export declare function renderMarkdownLite(h: any, source: string): any[];
 export declare function PrReviewModal(props: PrReviewModalProps): any;

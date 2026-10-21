@@ -266,6 +266,24 @@ body:not([data-ds-dark-theme]) .ghsp-btn-auto.on{color:#1a7f37}
 .ghsp-head-actions .ghsp-btn[disabled]{background:var(--dsw-alias-bg-layer-1);border-color:var(--dsw-alias-border-l1);color:var(--dsw-alias-label-secondary);box-shadow:none;opacity:.7}
 .ghsp-head-actions .ghsp-select{height:24px;border-radius:7px;padding:0 6px;font-size:11px}
 .ghsp-more{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:6px 10px;font-size:11px;color:var(--dsw-alias-label-secondary)}
+.ghsp-menu{position:fixed;z-index:1000;min-width:168px;padding:4px;border-radius:10px;border:1px solid var(--dsw-alias-border-l2);background:color-mix(in srgb, var(--dsw-alias-bg-base) 96%, #000 4%);box-shadow:0 12px 32px rgba(0,0,0,.4)}
+.ghsp-menu-head{padding:5px 8px 6px;font-size:10.5px;color:var(--dsw-alias-label-secondary);border-bottom:1px solid var(--dsw-alias-border-l1);margin-bottom:4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ghsp-menu-item{display:block;width:100%;padding:6px 9px;border:0;border-radius:6px;background:transparent;color:var(--dsw-alias-label-primary);font-size:11.5px;text-align:left;cursor:pointer}
+.ghsp-menu-item:hover{background:var(--dsw-alias-bg-layer-2)}
+.ghsp-hint{position:fixed;bottom:186px;right:20px;max-width:360px;padding:6px 10px;border-radius:8px;font-size:11px;color:var(--dsw-alias-label-primary);background:color-mix(in srgb, var(--dsw-alias-bg-base) 96%, #000 4%);border:1px solid var(--dsw-alias-border-l2);box-shadow:0 8px 24px rgba(0,0,0,.35);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ghsp-drag-handle{cursor:grab;user-select:none}
+.ghsp-drag-handle:active{cursor:grabbing}
+.ghsp-pill{cursor:grab}
+.ghsp-pill:active{cursor:grabbing}
+.ghsp-card-age{font-size:10px;color:var(--dsw-alias-label-secondary);font-variant-numeric:tabular-nums;opacity:.8}
+.ghsp-icon-btn.spinning svg{animation:ghsp-spin .8s linear infinite}
+.ghsp-icon-btn[disabled]{opacity:.6;cursor:default}
+.ghsp-detail-age{color:var(--dsw-alias-label-secondary);font-variant-numeric:tabular-nums;opacity:.75}
+.ghsp-file-toggle{width:16px;height:16px;padding:0;border:0;background:transparent;color:var(--dsw-alias-label-secondary);cursor:pointer;font-size:10px;line-height:1}
+.ghsp-file-toggle.ghost{cursor:default;opacity:.5}
+.ghsp-btn:disabled{opacity:.5;cursor:not-allowed}
+.ghsp-head-actions .ghsp-btn-merge:disabled{background:var(--dsw-alias-bg-layer-1);border-color:var(--dsw-alias-border-l1);color:var(--dsw-alias-label-secondary);box-shadow:none}
+.ghsp-blocked{font-size:10.5px;color:var(--dsw-alias-state-warn-primary,#d29922);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:220px}
 `;
 
 let sessionPrStyleEl: any = null;
@@ -274,10 +292,15 @@ let sessionPrStyleEl: any = null;
 export function watchSessionPrVisibility() {
   if (prVisibilityBound || typeof document === "undefined" || !document.addEventListener) return () => {};
   prVisibilityBound = true;
-  var handler = function () { retunePolling(); };
+  // 回到前台：用户就是要看最新状态，直接绕缓存
+  var handler = function () { retunePolling(!document.hidden); };
   document.addEventListener("visibilitychange", handler);
+  // 窗口重新获得焦点（切完 GitHub 网页回来）同样立刻刷新
+  var onFocus = function () { retunePolling(true); };
+  try { window.addEventListener("focus", onFocus); } catch (e) { /* 忽略 */ }
   return () => {
     try { document.removeEventListener("visibilitychange", handler); } catch (e) { /* 忽略 */ }
+    try { window.removeEventListener("focus", onFocus); } catch (e) { /* 忽略 */ }
     prVisibilityBound = false;
   };
 }
@@ -345,6 +368,7 @@ function useMainSessionId(useSessions: any) {
 
 interface SessionPrStore {
   sid: string | null;
+  refreshing?: boolean;
   items: any[];
   loading: boolean;
   error: string | null;
@@ -363,6 +387,14 @@ var prVisibilityBound = false;
 var prInflightSid: string | null = null;
 /** false = 浮窗首屏只要数量与编号（不跑 gh）；展开卡片 / 打开面板后置 true，补元数据 */
 var prWantFull = false;
+/** 每 N 次轮询强制绕一次缓存：host 侧元数据有 TTL，纯靠缓存轮询永远落后一个 TTL */
+var prTickCount = 0;
+/** 连续失败次数：GitHub 抖动/断网时不要每 8 秒砸一次，指数退避到 64s */
+var prFailStreak = 0;
+var PR_FORCE_EVERY = 3;
+var prLastForceAt = 0;
+/** 浮窗卡片是否展开：展开时用户就在盯它，按「在看」的节奏刷 */
+var overlayCardOpen = false;
 
 function publishPrStore(next: SessionPrStore) {
   prStore = next;
@@ -380,6 +412,11 @@ function prSignature(items: any[]) {
 
 function loadSessionPrs(sid: string, force: boolean) {
   if (!sid) return;
+  if (force) {
+    prLastForceAt = Date.now();
+    // 手动/强制刷新要有可见反馈：卡片上的 ⟳ 会转起来
+    if (!prStore.refreshing) publishPrStore(Object.assign({}, prStore, { refreshing: true }));
+  }
   // 同一会话单飞；切了会话就别被上一个会话的请求挡住（它的响应会被 sid 校验丢掉）
   if (prInflightSid === sid && !force) return;
   prInflightSid = sid;
@@ -392,20 +429,26 @@ function loadSessionPrs(sid: string, force: boolean) {
       // 会话已经切走：这一发是旧会话的，丢掉不要覆盖新状态
       if (prStore.sid !== sid) return;
       if (json && json.ok) {
+        if (prFailStreak > 0) { prFailStreak = 0; schedulePolling(); }
         var items = (json.data && json.data.items) || [];
         var sig = prSignature(items);
         if (sig === prStore.signature) {
-          // 内容没变：只更新时间戳，items 保持同一引用（不触发 diff 重算）
-          prStore = Object.assign({}, prStore, { loading: false, error: null, at: Date.now() });
+          // 内容没变：items 保持同一引用（不触发 diff 重算），但时间戳要通知出去，
+          // 否则「刚刚/Ns」永远停在旧值，用户会以为刷新没生效。
+          publishPrStore(Object.assign({}, prStore, { loading: false, error: null, at: Date.now() }));
         } else {
           publishPrStore({ sid: sid, items: items, loading: false, error: null, at: Date.now(), signature: sig });
         }
       } else {
+        prFailStreak += 1;
+        schedulePolling();
         publishPrStore(Object.assign({}, prStore, { loading: false, error: (json && (json.error || json.message)) || "读取失败" }));
       }
     })
     .catch(function (err: any) {
       if (prStore.sid !== sid) return;
+      prFailStreak += 1;
+      schedulePolling();
       publishPrStore(Object.assign({}, prStore, { loading: false, error: String((err && err.message) || err) }));
     })
     .finally(function () {
@@ -439,7 +482,12 @@ function prPollInterval() {
   try {
     if (typeof document !== "undefined" && document.hidden) return 0;
   } catch (e) { /* 无 document 环境忽略 */ }
-  return openPanelCount > 0 ? 8000 : 30000;
+  var base = (openPanelCount > 0 || overlayCardOpen) ? 8000 : 30000;
+  if (prFailStreak > 0) {
+    var factor = Math.min(1 << Math.min(prFailStreak, 3), 8); // ×2 ×4 ×8，封顶 8 倍
+    return Math.min(base * factor, 120000);
+  }
+  return base;
 }
 
 function schedulePolling() {
@@ -449,15 +497,19 @@ function schedulePolling() {
   var every = prPollInterval();
   if (every <= 0) return;
   var pollingSid: string = sid;
-  prTimer = setInterval(function () { loadSessionPrs(pollingSid, false); }, every);
+  prTimer = setInterval(function () {
+    prTickCount += 1;
+    // 每 PR_FORCE_EVERY 拍绕一次缓存；其余拍走缓存，省 gh
+    loadSessionPrs(pollingSid, prTickCount % PR_FORCE_EVERY === 0);
+  }, every);
 }
 
 /** 面板开合 / 窗口可见性变化时，按新节奏重排（同一会话） */
-function retunePolling() {
+function retunePolling(force?: boolean) {
   var sid = prTimerSid;
   if (!sid) return;
   schedulePolling();
-  if (prPollInterval() > 0) loadSessionPrs(sid, false);
+  if (prPollInterval() > 0) loadSessionPrs(sid, force === true);
 }
 
 /** 切到「要完整元数据」：浮窗展开、或面板挂载时调用 */
@@ -528,12 +580,187 @@ export function SessionPrOverlay(props: any) {
   return React.createElement(SessionPrOverlayInner, props);
 }
 
+/** 浮窗位置：localStorage 持久化；坏数据当作没设置 */
+const OVERLAY_POS_KEY = "dsh-github-flow:overlay-pos";
+
+function loadOverlayPos() {
+  try {
+    var raw = localStorage.getItem(OVERLAY_POS_KEY);
+    if (!raw) return null;
+    var v = JSON.parse(raw);
+    if (!v || typeof v.x !== "number" || typeof v.y !== "number") return null;
+    if (!isFinite(v.x) || !isFinite(v.y)) return null;
+    return { x: v.x, y: v.y };
+  } catch (e) { return null; }
+}
+
+function saveOverlayPos(pos: any) {
+  try {
+    if (!pos) localStorage.removeItem(OVERLAY_POS_KEY);
+    else localStorage.setItem(OVERLAY_POS_KEY, JSON.stringify({ x: Math.round(pos.x), y: Math.round(pos.y) }));
+  } catch (e) { /* 隐私模式/配额满：位置不持久化，但拖拽本身仍然可用 */ }
+}
+
+/** 「刚刚 / 12s / 2m」——让用户看得见新鲜度，而不是猜 */
+function ageLabel(at: number) {
+  if (!at) return "";
+  var sec = Math.max(0, Math.round((Date.now() - at) / 1000));
+  if (sec < 5) return "刚刚";
+  if (sec < 60) return sec + "s";
+  var min = Math.round(sec / 60);
+  return min + "m";
+}
+
 function SessionPrOverlayInner(props: any) {
   var sessionId = useMainSessionId(props.useSessions);
   var pair = useSessionCreatedPrs(sessionId);
   var state = pair[0];
   var refresh = pair[1];
   var [open, setOpen] = React.useState(false);
+  // 右键菜单：{x, y, item}；同时用一个短 toast 反馈「已复制」
+  var [menu, setMenu] = React.useState(null as any);
+  var [hint, setHint] = React.useState(null as any);
+
+  /* ---------------- 拖拽：位置持久化到 localStorage ---------------- */
+  var [pos, setPos] = React.useState(function () { return loadOverlayPos(); });
+  var dragRef = React.useRef(null);
+  var movedRef = React.useRef(false);
+
+  function overlayStyle() {
+    if (!pos) return undefined;
+    return { left: pos.x + "px", top: pos.y + "px", right: "auto", bottom: "auto" };
+  }
+
+  function onDragStart(ev: any) {
+    if (!ev || (ev.button !== undefined && ev.button !== 0)) return;
+    var wrap = ev.currentTarget && ev.currentTarget.closest ? ev.currentTarget.closest(".ghsp-overlay") : null;
+    var rect = wrap && wrap.getBoundingClientRect ? wrap.getBoundingClientRect() : { left: 0, top: 0, width: 360, height: 240 };
+    dragRef.current = {
+      startX: ev.clientX || 0,
+      startY: ev.clientY || 0,
+      origX: pos ? pos.x : (rect.left || 0),
+      origY: pos ? pos.y : (rect.top || 0),
+      w: rect.width || 360,
+      h: rect.height || 240,
+    };
+    movedRef.current = false;
+    try {
+      document.addEventListener("mousemove", onDragMove, true);
+      document.addEventListener("mouseup", onDragEnd, true);
+      // 拖的时候别顺手选中背后的正文
+      if (document.body && document.body.style) document.body.style.userSelect = "none";
+    } catch (e) { /* 无 DOM 环境忽略 */ }
+    if (ev.preventDefault) ev.preventDefault();
+  }
+
+  function clampPos(x: number, y: number, w: number, h: number) {
+    var vw = 1280;
+    var vh = 800;
+    try { vw = window.innerWidth || vw; vh = window.innerHeight || vh; } catch (e) { /* 忽略 */ }
+    // 至少留 80px 在视口内，避免拖出去后再也抓不到
+    var minX = 8 - w + 80;
+    var maxX = vw - 80;
+    var minY = 8;
+    var maxY = vh - 40;
+    return { x: Math.min(Math.max(x, minX), maxX), y: Math.min(Math.max(y, minY), maxY) };
+  }
+
+  function onDragMove(ev: any) {
+    var d = dragRef.current;
+    if (!d) return;
+    var dx = (ev.clientX || 0) - d.startX;
+    var dy = (ev.clientY || 0) - d.startY;
+    if (!movedRef.current && Math.abs(dx) + Math.abs(dy) < 4) return; // 抖动阈值：没真的拖就别接管
+    movedRef.current = true;
+    setPos(clampPos(d.origX + dx, d.origY + dy, d.w, d.h));
+  }
+
+  function onDragEnd() {
+    dragRef.current = null;
+    try {
+      document.removeEventListener("mousemove", onDragMove, true);
+      document.removeEventListener("mouseup", onDragEnd, true);
+      if (document.body && document.body.style) document.body.style.userSelect = "";
+    } catch (e) { /* 忽略 */ }
+    if (movedRef.current) saveOverlayPos(posRef.current);
+  }
+
+  // 拖动结束时要拿到最新 pos（setState 是异步的），用 ref 同步一份
+  var posRef = React.useRef(pos);
+  posRef.current = pos;
+
+  React.useEffect(function () {
+    return function () {
+      try {
+        document.removeEventListener("mousemove", onDragMove, true);
+        document.removeEventListener("mouseup", onDragEnd, true);
+        if (document.body && document.body.style) document.body.style.userSelect = "";
+      } catch (e) { /* 忽略 */ }
+    };
+  }, []);
+
+  function resetPos() {
+    setPos(null);
+    saveOverlayPos(null);
+  }
+
+  function closeMenu() { setMenu(null); }
+
+  // 菜单开着时：点别处 / Esc / 滚动 都关掉（右键菜单不关会很脏）
+  React.useEffect(function () {
+    if (!menu) return;
+    var onDown = function (ev: any) {
+      var el = ev && ev.target;
+      if (el && el.closest && el.closest(".ghsp-menu")) return;
+      closeMenu();
+    };
+    var onKey = function (ev: any) { if (ev && ev.key === "Escape") closeMenu(); };
+    var onScroll = function () { closeMenu(); };
+    try {
+      document.addEventListener("mousedown", onDown, true);
+      document.addEventListener("keydown", onKey, true);
+      window.addEventListener("scroll", onScroll, true);
+      window.addEventListener("resize", onScroll);
+    } catch (e) { /* 无 DOM 环境忽略 */ }
+    return function () {
+      try {
+        document.removeEventListener("mousedown", onDown, true);
+        document.removeEventListener("keydown", onKey, true);
+        window.removeEventListener("scroll", onScroll, true);
+        window.removeEventListener("resize", onScroll);
+      } catch (e) { /* 忽略 */ }
+    };
+  }, [menu]);
+
+  function flashHint(text: string) {
+    setHint(text);
+    try { setTimeout(function () { setHint(null); }, 2600); } catch (e) { /* 忽略 */ }
+  }
+
+  function prUrlOf(item: any) {
+    return (item && item.url) || ("https://github.com/" + (item && item.repo) + "/pull/" + (item && item.number));
+  }
+
+  function copyPrLink(item: any) {
+    var url = prUrlOf(item);
+    try {
+      if (navigator && navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(url).then(function () { flashHint("已复制链接 " + url); }, function () { flashHint("复制失败，链接：" + url); });
+      } else {
+        flashHint("复制失败，链接：" + url);
+      }
+    } catch (e) {
+      flashHint("复制失败，链接：" + url);
+    }
+    closeMenu();
+  }
+
+  function openOnGitHub(item: any) {
+    closeMenu();
+    var url = prUrlOf(item);
+    if (props && typeof props.onOpenUrl === "function") props.onOpenUrl(url);
+    else { try { window.open(url, "_blank", "noopener,noreferrer"); } catch (e) { /* 忽略 */ } }
+  }
 
   var items = state.items || [];
   // 面板已经打开时不再悬浮：它盖住的就是刚打开的那一栏
@@ -546,15 +773,21 @@ function SessionPrOverlayInner(props: any) {
   if (!open) {
     return React.createElement(
       "div",
-      { className: "ghsp-overlay" },
+      { className: "ghsp-overlay", style: overlayStyle() },
       React.createElement(
         "button",
         {
           type: "button",
           className: "ghsp-pill",
           "aria-label": "展开本会话提交的 PR",
-          onClick: function () { setOpen(true); requestFullSessionPrs(); },
-          title: "本会话提交的 PR",
+          onMouseDown: onDragStart,
+          onDoubleClick: resetPos,
+          onClick: function () {
+            // 拖完那一下也会触发 click，别让它顺手把卡片展开
+            if (movedRef.current) { movedRef.current = false; return; }
+            setOpen(true); requestFullSessionPrs();
+          },
+          title: "本会话提交的 PR（可拖动，双击归位）",
         },
         renderOctocat(13, "currentColor"),
         React.createElement("span", { className: "ghsp-pill-text" }, "PR"),
@@ -571,19 +804,32 @@ function SessionPrOverlayInner(props: any) {
 
   return React.createElement(
     "div",
-    { className: "ghsp-overlay" },
+    { className: "ghsp-overlay", style: overlayStyle() },
     React.createElement(
       "section",
       { className: "ghsp-card", "aria-label": "本会话提交的 PR" },
       React.createElement(
         "header",
-        { className: "ghsp-card-head" },
+        {
+          className: "ghsp-card-head ghsp-drag-handle",
+          onMouseDown: onDragStart,
+          onDoubleClick: resetPos,
+          title: "拖动移动，双击归位",
+        },
         renderOctocat(13, "currentColor"),
         React.createElement("span", { className: "ghsp-card-title" }, "本会话提交的 PR"),
         React.createElement("span", { className: "ghsp-card-sub" }, String(total)),
+        React.createElement("span", { className: "ghsp-card-age", title: "数据更新时间" }, ageLabel(state.at)),
         React.createElement(
           "button",
-          { type: "button", className: "ghsp-icon-btn", title: "刷新", "aria-label": "刷新", onClick: function () { refresh(); } },
+          {
+            type: "button",
+            className: "ghsp-icon-btn" + (state.refreshing ? " spinning" : ""),
+            title: state.refreshing ? "刷新中…" : "刷新（立即绕过缓存）",
+            "aria-label": "刷新",
+            disabled: Boolean(state.refreshing),
+            onClick: function () { refresh(); },
+          },
           React.createElement(
             "svg",
             { width: 12, height: 12, viewBox: "0 0 12 12", "aria-hidden": "true" },
@@ -592,7 +838,7 @@ function SessionPrOverlayInner(props: any) {
         ),
         React.createElement(
           "button",
-          { type: "button", className: "ghsp-icon-btn", title: "收起", "aria-label": "收起", onClick: function () { setOpen(false); } },
+          { type: "button", className: "ghsp-icon-btn", title: "收起", "aria-label": "收起", onClick: function () { setOpen(false); overlayCardOpen = false; retunePolling(); } },
           React.createElement(
             "svg",
             { width: 12, height: 12, viewBox: "0 0 12 12", "aria-hidden": "true" },
@@ -600,6 +846,28 @@ function SessionPrOverlayInner(props: any) {
           )
         )
       ),
+      menu
+        ? React.createElement("div", {
+            className: "ghsp-menu",
+            role: "menu",
+            style: { left: menu.x + "px", top: menu.y + "px" },
+            onContextMenu: function (ev: any) { if (ev && ev.preventDefault) ev.preventDefault(); },
+          },
+            React.createElement("div", { className: "ghsp-menu-head" }, "#" + (menu.item && menu.item.number) + " " + (menu.item && menu.item.repo ? menu.item.repo : "")),
+            React.createElement("button", {
+              type: "button", role: "menuitem", className: "ghsp-menu-item",
+              onClick: function () { closeMenu(); if (props.onOpenPr) props.onOpenPr({ repo: menu.item.repo, number: menu.item.number }); },
+            }, "在面板里打开"),
+            React.createElement("button", {
+              type: "button", role: "menuitem", className: "ghsp-menu-item",
+              onClick: function () { copyPrLink(menu.item); },
+            }, "复制链接"),
+            React.createElement("button", {
+              type: "button", role: "menuitem", className: "ghsp-menu-item",
+              onClick: function () { openOnGitHub(menu.item); },
+            }, "跳转 GitHub"))
+        : null,
+      hint ? React.createElement("div", { className: "ghsp-hint" }, hint) : null,
       React.createElement(
         "ul",
         { className: "ghsp-list" },
@@ -616,6 +884,12 @@ function SessionPrOverlayInner(props: any) {
                 className: "ghsp-row",
                 onClick: function () {
                   if (props.onOpenPr) props.onOpenPr({ repo: item.repo, number: item.number });
+                },
+                onContextMenu: function (ev: any) {
+                  if (ev && ev.preventDefault) ev.preventDefault();
+                  var x = (ev && (ev.clientX || 0)) || 0;
+                  var y = (ev && (ev.clientY || 0)) || 0;
+                  setMenu({ x: x, y: y, item: item });
                 },
               },
               // 两行：第一行只放编号 + 标题 + 状态（标题吃满宽度），第二行放目标分支、仓库、CI
@@ -663,7 +937,45 @@ function readTabParams(props: any, info: any) {
   return out;
 }
 
-function usePrDetail(repo: string | null, number: number | null, reloadTick = 0) {
+/**
+ * PR 讨论串（reviews / comments / commits）单独拉。
+ *
+ * 为什么拆：这一段占详情响应的大头（实测 55KB / 2s），和「头部+按钮」一起取，
+ * 用户要等 2.4s 才看见任何东西；拆开后 1.6s 就能先看到头，讨论区再补。
+ */
+function usePrThread(repo: string | null, number: number | null, tick: number) {
+  var [state, setState] = React.useState({ loading: false, data: null as any, error: null as string | null });
+
+  React.useEffect(function () {
+    if (!repo || !number) {
+      setState({ loading: false, data: null, error: null });
+      return;
+    }
+    var alive = true;
+    setState(function (prev: any) { return { loading: true, data: prev.data, error: null }; });
+    var controller = typeof AbortController === "function" ? new AbortController() : null;
+    var timer = setTimeout(function () { if (controller) controller.abort(); }, 25000);
+    fetch("/api/github/pr-thread?repo=" + encodeURIComponent(repo) + "&number=" + String(number)
+      + (tick > 0 ? "&refresh=1" : ""),
+      { headers: { accept: "application/json" }, signal: controller ? controller.signal : undefined })
+      .then(function (r) { return r.json(); })
+      .then(function (json: any) {
+        if (!alive) return;
+        if (json && json.ok && json.data) setState({ loading: false, data: json.data, error: null });
+        else setState({ loading: false, data: null, error: (json && (json.error || json.message)) || "读取讨论失败" });
+      })
+      .catch(function (err: any) {
+        if (!alive) return;
+        setState({ loading: false, data: null, error: err && err.name === "AbortError" ? "读取讨论超时" : String((err && err.message) || err) });
+      })
+      .then(function () { clearTimeout(timer); });
+    return function () { alive = false; };
+  }, [repo, number, tick]);
+
+  return state;
+}
+
+function usePrDetail(repo: string | null, number: number | null, reloadTick = 0, forceTick = 0) {
   var [state, setState] = React.useState({ loading: Boolean(number), error: null as string | null, pr: null as any, diff: "", diffError: "" });
 
   React.useEffect(function () {
@@ -674,26 +986,47 @@ function usePrDetail(repo: string | null, number: number | null, reloadTick = 0)
     var alive = true;
     setState(function (prev: any) { return { loading: true, error: null, pr: prev && prev.pr && prev.pr.number === number ? prev.pr : null, diff: prev && prev.pr && prev.pr.number === number ? prev.diff : "", diffError: "" }; });
     // withDiff=0：详情不等 diff。大 PR 的 gh pr diff 会跑满 30s，等它等于整页白屏。
-    var qs = "/api/github/pr-detail?withDiff=0&number=" + String(number);
+    // thread（reviews/comments/commits）拆成独立请求：core 先画出来，讨论区后到
+    var qs = "/api/github/pr-detail?withDiff=0&withThread=0&number=" + String(number)
+      + (forceTick > 0 ? "&refresh=1" : "");
     if (repo) qs += "&repo=" + encodeURIComponent(repo);
-    fetch(qs, { headers: { accept: "application/json" } })
+    var controller = typeof AbortController === "function" ? new AbortController() : null;
+    // 超时兜底：host 慢或挂住时不能让用户对着骨架屏无限等（「看不到数据」最像的现场）
+    var timer = setTimeout(function () { if (controller) controller.abort(); }, 15000);
+    fetch(qs, { headers: { accept: "application/json" }, signal: controller ? controller.signal : undefined })
       .then(function (r) { return r.json(); })
       .then(function (json: any) {
         if (!alive) return;
-        if (json && json.ok) {
-          setState({ loading: false, error: null, pr: json.data && json.data.pr, diff: (json.data && json.data.diff) || "", diffError: (json.data && json.data.diffError) || "" });
+        if (json && json.ok && json.data && json.data.pr) {
+          setState({ loading: false, error: null, pr: json.data.pr, diff: (json.data.diff) || "", diffError: (json.data.diffError) || "", at: Date.now() });
+        } else if (json && json.ok) {
+          // 「ok 但没有 pr」曾经被当成「还没读完」→ 永远骨架屏。空成功必须报错。
+          setState({ loading: false, error: "PR 详情为空（Host 返回 ok 但缺少 pr 字段）", pr: null, diff: "", diffError: "" });
         } else {
           setState({ loading: false, error: (json && (json.error || json.message)) || "读取 PR 失败", pr: null, diff: "", diffError: "" });
         }
       })
       .catch(function (err: any) {
         if (!alive) return;
-        setState({ loading: false, error: String((err && err.message) || err), pr: null, diff: "", diffError: "" });
-      });
+        var msg = err && err.name === "AbortError"
+          ? "读取 PR 超时（15 秒）。可能是 gh 慢或仓库很大；点重试，或直接在 GitHub 打开。"
+          : String((err && err.message) || err);
+        setState({ loading: false, error: msg, pr: null, diff: "", diffError: "" });
+      })
+      .then(function () { clearTimeout(timer); });
     return function () { alive = false; };
-  }, [repo, number, reloadTick]);
+  }, [repo, number, reloadTick, forceTick]);
 
-  return state;
+  // 写操作成功后先本地改状态：按钮/徽标立刻变，真正的对账交给随后的后台刷新。
+  // 不这么做的话，点完「合并」要等一次往返（~0.8s）界面才动，用户会以为没生效。
+  var patch = function (fields: any) {
+    setState(function (prev: any) {
+      if (!prev || !prev.pr) return prev;
+      return Object.assign({}, prev, { pr: Object.assign({}, prev.pr, fields) });
+    });
+  };
+
+  return Object.assign({}, state, { patch });
 }
 
 /** 评论条的行号文案：单行 `:12`，多行 `:12–18` */
@@ -735,7 +1068,19 @@ function DiffBlock(props: any) {
         key: i,
         className: "ghsp-line " + row.kind + (pickable ? " pickable" : "") + (isSel ? " sel" : ""),
         onClick: pickable ? function (ev: any) { pick(row, ev); } : undefined,
-        title: pickable ? "点击评论这一行（Shift+点击 选一段）" : undefined,
+        // 键盘可达：diff 行是「可点的 code 元素」，不补 role/tabIndex 就永远 Tab 不到
+        role: pickable ? "button" : undefined,
+        tabIndex: pickable ? 0 : undefined,
+        "aria-label": pickable ? "评论第 " + (row.newLine || 0) + " 行" : undefined,
+        onKeyDown: pickable
+          ? function (ev: any) {
+              if (ev && (ev.key === "Enter" || ev.key === " ")) {
+                if (ev.preventDefault) ev.preventDefault();
+                pick(row, ev);
+              }
+            }
+          : undefined,
+        title: pickable ? "点击评论这一行（Shift+点击 选一段；Enter 也可以）" : undefined,
       }, (row.newLine ? String(row.newLine).padStart(4, " ") + " " : "     ") + (row.text || " "));
     }),
     rows.length > cap
@@ -923,6 +1268,44 @@ function usePrDiff(repo: string | null, number: number | null, reloadTick = 0, e
   return state;
 }
 
+/**
+ * 按文件取补丁（`/api/github/pr-files`）。
+ *
+ * 为什么需要：整份 diff 撞 GitHub 的 20000 行硬上限（或 30s 超时）时，面板就只剩
+ * 「拉取失败」。按文件拿 patch 不受这个上限约束——大 PR 也能一个一个看。
+ * 同时它还是文件清单的来源（详情 core 不再带 files 字段）。
+ */
+function usePrFiles(repo: string | null, number: number | null, tick = 0, enabled = true) {
+  var [state, setState] = React.useState({ loading: false, error: null as string | null, files: [] as any[], truncated: false });
+
+  React.useEffect(function () {
+    if (!enabled || !repo || !number) {
+      setState({ loading: false, error: null, files: [], truncated: false });
+      return;
+    }
+    var alive = true;
+    setState(function (prev: any) { return { loading: true, error: null, files: prev.files || [], truncated: prev.truncated || false }; });
+    var controller = typeof AbortController === "function" ? new AbortController() : null;
+    var timer = setTimeout(function () { if (controller) controller.abort(); }, 30000);
+    fetch("/api/github/pr-files?repo=" + encodeURIComponent(repo) + "&number=" + String(number) + (tick > 0 ? "&refresh=1" : ""),
+      { headers: { accept: "application/json" }, signal: controller ? controller.signal : undefined })
+      .then(function (r) { return r.json(); })
+      .then(function (json: any) {
+        if (!alive) return;
+        if (json && json.ok && json.data) setState({ loading: false, error: null, files: json.data.files || [], truncated: Boolean(json.data.truncated) });
+        else setState({ loading: false, error: (json && (json.error || json.message)) || "读取文件补丁失败", files: [], truncated: false });
+      })
+      .catch(function (err: any) {
+        if (!alive) return;
+        setState({ loading: false, error: err && err.name === "AbortError" ? "读取文件补丁超时" : String((err && err.message) || err), files: [], truncated: false });
+      })
+      .then(function () { clearTimeout(timer); });
+    return function () { alive = false; clearTimeout(timer); };
+  }, [repo, number, tick, enabled]);
+
+  return state;
+}
+
 /** 右列 PR 面板（v3）：左侧主展示（描述 / 变更 / 讨论），右侧审批与操作 */
 /** 截断 markdown 时按行边界切：切在代码块/表格中间会渲染出半截标签 */
 function clipMarkdown(text: string, limit: number) {
@@ -970,9 +1353,12 @@ function SessionPrPanelBody(props: any) {
   var [reloadTick, setReloadTick] = React.useState(0);
   // 自动刷新只 bump 这个：元数据 30s 一刷，diff 不跟着重拉（几 MB 的 patch 没必要每 30s 传一次）
   var [detailTick, setDetailTick] = React.useState(0);
+  // 讨论串的刷新节奏比 core 慢：它重（55KB），且内容只在有人评论时才变
+  var [threadTick, setThreadTick] = React.useState(0);
   // diff 懒加载：不点不开拉。181 个文件的 PR 光 gh pr diff 就能跑满 30s，
   // 默认拉它等于让整个面板等一个「不怎么看」的区域。
   var [wantDiff, setWantDiff] = React.useState(false);
+  var [expandedFiles, setExpandedFiles] = React.useState({} as any);
   var [mergeMethod, setMergeMethod] = React.useState("squash");
   // 仓库允许哪几种合并方式（allow_*_merge 只在仓库对象上）——不查就会让人选一个必然被拒的方式
   var [mergeMethods, setMergeMethods] = React.useState(null as any);
@@ -991,12 +1377,15 @@ function SessionPrPanelBody(props: any) {
       try { if (typeof document !== "undefined" && document.hidden) return; } catch (e) { /* 忽略 */ }
       setDetailTick(function (n: number) { return n + 1; });
     }
-    timer = setInterval(refreshNow, 30000);
+    timer = setInterval(refreshNow, 10000);
     var onVisible = function () { refreshNow(); };
     try { if (typeof document !== "undefined" && document.addEventListener) document.addEventListener("visibilitychange", onVisible); } catch (e) { /* 忽略 */ }
+    var onFocus = function () { refreshNow(); };
+    try { if (typeof window !== "undefined" && window.addEventListener) window.addEventListener("focus", onFocus); } catch (e) { /* 忽略 */ }
     return function () {
       if (timer) clearInterval(timer);
       try { if (typeof document !== "undefined" && document.removeEventListener) document.removeEventListener("visibilitychange", onVisible); } catch (e) { /* 忽略 */ }
+      try { if (typeof window !== "undefined" && window.removeEventListener) window.removeEventListener("focus", onFocus); } catch (e) { /* 忽略 */ }
     };
   }, [selected, selectedRepo]);
 
@@ -1028,8 +1417,17 @@ function SessionPrPanelBody(props: any) {
     return function () { alive = false; };
   }, [selectedRepo]);
 
-  var detail = usePrDetail(selectedRepo, selected, detailTick);
-  var pr = detail.pr || null;
+  // detailTick：自动刷新（吃 8s 缓存）；reloadTick：手动刷新/写操作后（穿透缓存）
+  var detail = usePrDetail(selectedRepo, selected, detailTick, reloadTick);
+  var thread = usePrThread(selectedRepo, selected, threadTick);
+  // 把讨论串合进详情对象：下游（讨论/待修改意见/评审卡）无需关心数据来自两次请求
+  var pr = detail.pr
+    ? Object.assign({}, detail.pr, thread.data ? {
+        reviews: thread.data.reviews || detail.pr.reviews || [],
+        comments: thread.data.comments || detail.pr.comments || [],
+        commits: thread.data.commits || detail.pr.commits || [],
+      } : {})
+    : null;
   var diffState = usePrDiff(selectedRepo, selected, reloadTick, wantDiff);
 
   React.useEffect(function () {
@@ -1099,16 +1497,57 @@ function SessionPrPanelBody(props: any) {
     return (selectedRepo || "") + "#" + selected;
   }
 
+  /** 失败项里有没有「评审门禁」类检查（这类不是代码检查，修完要重新请求评审） */
+  function isReviewGateCheck(c: any) {
+    var name = String((c && (c.name || c.context)) || "");
+    return /review|gate|approve|bot/i.test(name);
+  }
+
   function fixCheckPrompt(list: any[]) {
     var lines: string[] = [];
-    lines.push("PR " + prRef() + " 的 CI 失败了，请修复：");
-    list.forEach(function (c: any, i: number) {
-      lines.push("");
-      lines.push((list.length > 1 ? (i + 1) + ") " : "") + "检查「" + (c.name || c.context || "check") + "」失败" + (c.workflowName ? "（workflow: " + c.workflowName + "）" : ""));
-      if (c.detailsUrl || c.targetUrl) lines.push("   详情：" + (c.detailsUrl || c.targetUrl));
-    });
+    var sha = String((pr && pr.headRefOid) || "").slice(0, 8);
+    var gateItems = list.filter(isReviewGateCheck);
+
+    lines.push("PR " + prRef() + " 的检查没通过，请修到全绿。");
     lines.push("");
-    lines.push("步骤：先拉失败日志（`gh run view <run-id> --log-failed`，URL 里能拿到 run id），定位到具体断言/编译错误，再改代码；改完告诉我需要重跑哪些 job。不要靠猜，先看日志。");
+    lines.push("坐标");
+    lines.push("- 仓库/编号：" + prRef());
+    if (pr && pr.baseRefName) lines.push("- 目标分支：" + pr.baseRefName + (pr.headRefName ? " ← 源分支：" + pr.headRefName : ""));
+    if (sha) lines.push("- 当前 HEAD：" + sha + "（先确认你改的就是这个提交之上，别修旧代码）");
+    if (pr && pr.reviewDecision) lines.push("- 评审结论：" + pr.reviewDecision);
+    if (pr && pr.url) lines.push("- PR：" + pr.url);
+
+    lines.push("");
+    lines.push("失败项（共 " + list.length + "）");
+    list.forEach(function (c: any, i: number) {
+      var name = c.name || c.context || "check";
+      lines.push((list.length > 1 ? (i + 1) + ") " : "") + "「" + name + "」FAILED" + (c.workflowName ? "（workflow: " + c.workflowName + "）" : ""));
+      if (c.detailsUrl || c.targetUrl) lines.push("   详情：" + (c.detailsUrl || c.targetUrl));
+      if (isReviewGateCheck(c)) lines.push("   性质：评审门禁（不是代码检查，见下面第 6 步）");
+    });
+
+    lines.push("");
+    lines.push("怎么做");
+    if (gateItems.length === list.length) {
+      // 纯门禁：没有 workflow 日志可拉，失败原因只在评审意见里
+      lines.push("1. 这类检查没有运行日志，原因看 PR 的评审意见，不要靠猜：`gh pr view " + String(selected) + " --json reviewDecision,reviews,comments`。");
+    } else {
+      lines.push("1. 先拉失败日志再动手，不要靠猜：`gh run view <run-id> --log-failed`（run id 在详情 URL 里），定位到具体断言/编译错误。");
+    }
+    lines.push("2. 只改与该失败相关的最小范围；不动无关文件、不 force-push、不 dismiss 别人的 review。");
+    lines.push("3. 本地跑与失败检查等价的那条命令（workflow 里的测试/构建命令），确认本地先过。");
+    lines.push("4. 提交并推送到源分支" + (pr && pr.headRefName ? " `" + pr.headRefName + "`" : "") + "。");
+    lines.push("5. 推送后必须确认检查真的重跑了，而不是以为推完就完事：`gh pr checks " + String(selected) + " --watch`；若没有自动触发，用 `gh run rerun <run-id> --failed` 重跑。");
+
+    if (gateItems.length > 0 || (pr && String(pr.reviewDecision || "").toUpperCase() !== "APPROVED")) {
+      lines.push("6. 修完要**重新触发评审**：这是评审门禁类问题，光推代码不会自动放行——重新请求评审（`gh pr edit " + String(selected) + " --add-reviewer <reviewer>`，或在 PR 里 @ 对应 reviewer 说明已按意见修完），并确认 reviewDecision 变成 APPROVED 或新的一轮评审确实已触发。");
+      lines.push("7. 回报：改了什么文件、本地验证命令与结果、推送的 commit sha、`gh pr checks " + String(selected) + "` 当前结果、评审是否已重新请求。");
+    } else {
+      lines.push("6. 回报：改了什么文件、本地验证命令与结果、推送的 commit sha、`gh pr checks " + String(selected) + "` 当前结果。");
+    }
+
+    lines.push("");
+    lines.push("完成标准：上述检查全部变绿" + (gateItems.length > 0 ? "、且评审已重新请求并拿到结论" : "") + "；`gh pr checks " + String(selected) + "` 里不再有本次范围内的失败项。");
     return lines.join("\n");
   }
 
@@ -1121,7 +1560,14 @@ function SessionPrPanelBody(props: any) {
       lines.push("");
       lines.push(clipBody(one.body, 4000));
       lines.push("");
-      lines.push("要求：按这条意见改代码；改完说明改了哪些文件、要不要重新推 commit。做不到的部分说清原因，不要糊过去。");
+      lines.push("怎么做");
+      lines.push("1. 按这条意见改代码，只改相关范围；不动无关文件、不 force-push。");
+      lines.push("2. 本地跑相关测试/构建，确认能过再提交。");
+      lines.push("3. 推送到源分支" + (pr && pr.headRefName ? " `" + pr.headRefName + "`" : "") + "——评审意见只有落到**新的 commit** 上才算处理完。");
+      lines.push("4. **推完要重新请求评审**：GitHub 的 required_approving_review_count 不会因为新提交自动满足（多数仓库还要求 last-push approval）。重新请求 @" + (one.author || "<reviewer>") + " 复审（`gh pr edit " + String(selected) + " --add-reviewer " + (one.author || "<reviewer>") + "`，或在 PR 里 @ 对方说明已按意见修改）。");
+      lines.push("5. 如果这是个对话线程：在对应 thread 里回一句「已在 <sha> 修复」并 resolve，别让意见挂着。");
+      lines.push("6. 回报：改了哪些文件、本地验证结果、推送的 commit sha、复审是否已重新请求、线程是否已 resolve。");
+      lines.push("做不到的部分说清原因，不要糊过去。");
       return lines.join("\n");
     }
     lines.push("PR " + prRef() + " 有 " + items.length + " 条评审意见，请逐条处理：");
@@ -1131,7 +1577,13 @@ function SessionPrPanelBody(props: any) {
       lines.push(clipBody(it.body, 2000));
     });
     lines.push("");
-    lines.push("要求：按编号逐条处理，最后按编号回复你做了什么；有冲突或做不了的说清原因。");
+    lines.push("怎么做");
+    lines.push("1. 按编号逐条处理，只改相关范围；不动无关文件、不 force-push、不 dismiss 别人的 review。");
+    lines.push("2. 每条都要能指到具体改动（文件/行）或说明为什么不做。");
+    lines.push("3. 本地跑相关测试/构建后提交，推送到源分支" + (pr && pr.headRefName ? " `" + pr.headRefName + "`" : "") + "。");
+    lines.push("4. **推完要重新请求评审**（新提交不会自动满足 required_approving_review_count，很多仓库还要求 last-push approval）：在 PR 里 @ 提出意见的评审人说明已全部处理，请复审；对应 review thread 逐条回复「已在 <sha> 修复」并 resolve。");
+    lines.push("5. 全部处理完后跑一次 `gh pr checks " + String(selected) + "` 确认检查仍全绿，再回报。");
+    lines.push("6. 回报格式：按编号列「改了什么 / 验证命令与结果 / 复审是否已请求」；有冲突或做不了的同样按编号说明原因。");
     return lines.join("\n");
   }
 
@@ -1140,6 +1592,12 @@ function SessionPrPanelBody(props: any) {
     if (how === "failed") flash("error", "输入框不可用，也没有剪贴板权限");
     else if (how === "copied") flash("info", "输入框不可用，内容已复制到剪贴板");
     else flash("ok", "已放进输入框");
+  }
+
+  /** 面板里做过写操作后，浮窗那份列表也要立刻更新（否则卡片还显示旧状态） */
+  function refreshSessionList() {
+    setThreadTick(function (n: number) { return n + 1; });
+    if (prTimerSid) loadSessionPrs(prTimerSid, true);
   }
 
   function postJson(url: string, body: any): Promise<any> {
@@ -1157,6 +1615,7 @@ function SessionPrPanelBody(props: any) {
       var json = await postJson("/api/github/pr-comment", { repo: selectedRepo, number: selected, body: text.trim() });
       if (json && json.ok) {
         flash("ok", kindLabel + "已发布到 PR");
+        refreshSessionList();
         setComment("");
         setSideComment("");
         setReloadTick(function (n: number) { return n + 1; });
@@ -1194,6 +1653,7 @@ function SessionPrPanelBody(props: any) {
       var json = await postJson("/api/github/pr-inline-comment", payload);
       if (json && json.ok) {
         flash("ok", "行内评论已发布");
+        refreshSessionList();
         setComment("");
         setLineSel(null);
         setReloadTick(function (n: number) { return n + 1; });
@@ -1220,6 +1680,12 @@ function SessionPrPanelBody(props: any) {
       });
       if (json && json.ok) {
         flash("ok", (json.data && json.data.message) || "已提交");
+        // 乐观更新：先按用户意图改本地状态，避免「点了没反应」的那 0.8s
+        if (action === "merge") detail.patch({ state: "MERGED", mergedAt: new Date().toISOString() });
+        else if (action === "auto") detail.patch({ autoMergeRequest: { enabledAt: new Date().toISOString(), mergeMethod: mergeMethod } });
+        else if (action === "disable-auto") detail.patch({ autoMergeRequest: null });
+        refreshSessionList();
+        setThreadTick(function (n: number) { return n + 1; });
         setConfirmMerge(false);
         setReloadTick(function (n: number) { return n + 1; });
       } else {
@@ -1248,6 +1714,10 @@ function SessionPrPanelBody(props: any) {
       });
       if (json && json.ok) {
         flash("ok", (json.data && json.data.message) || "已提交");
+        if (event === "APPROVE") detail.patch({ reviewDecision: "APPROVED" });
+        else if (event === "REQUEST_CHANGES") detail.patch({ reviewDecision: "CHANGES_REQUESTED" });
+        refreshSessionList();
+        setThreadTick(function (n: number) { return n + 1; });
         setSideComment("");
         setReloadTick(function (n: number) { return n + 1; });
       } else {
@@ -1278,8 +1748,11 @@ function SessionPrPanelBody(props: any) {
                     React.createElement("span", null, "读取本会话 PR 失败：" + String(list.error)),
                     React.createElement("button", { type: "button", className: "ghsp-btn", onClick: function () { pair[1](); } }, "重试"))
                 : React.createElement("div", { className: "ghsp-empty" },
-                    React.createElement("strong", null, "本会话还没有提交 PR"),
-                    React.createElement("span", null, "用 github_pr 创建 PR 后，这里会自动出现。"))))
+                    React.createElement("strong", null, sessionId ? "本会话还没有提交 PR" : "这个标签页没有绑定会话"),
+                    React.createElement("span", null, sessionId
+                      ? "用 github_pr 创建 PR 后这里会出现；如果 PR 是在别的会话里提的，要去那个会话的右下角浮窗看。"
+                      : "它可能是上次启动恢复的旧标签：请从右下角浮窗重新打开，或直接刷新页面。"),
+                    React.createElement("span", { className: "ghsp-muted" }, "session: " + (sessionId || "（无）")))))
         : React.createElement("ul", { className: "ghsp-list", style: { padding: "6px" } },
             items.map(function (item: any) {
               var missing = Boolean(item.missing);
@@ -1318,21 +1791,53 @@ function SessionPrPanelBody(props: any) {
   var comments = (pr && pr.comments) || [];
   var commits = (pr && pr.commits) || [];
   var checks = (pr && pr.statusCheckRollup) || [];
-  var prFiles = (pr && pr.files) || [];
+  var filesState = usePrFiles(selectedRepo, selected, threadTick, Boolean(selected && selectedRepo));
+  // 文件清单优先用 /pr-files（详情 core 不再带 files 字段）
+  var prFiles = (filesState.files.length > 0 ? filesState.files : ((pr && pr.files) || []));
 
   var prStateUpper = String((pr && pr.state) || "").toUpperCase();
   var mergeState = String((pr && pr.mergeStateStatus) || "").toUpperCase();
   var autoOn = Boolean(pr && pr.autoMergeRequest);
+  var reviewUpper = String((pr && pr.reviewDecision) || "").toUpperCase();
 
   // 按钮只在「这件事还能做」时出现：已合并 / 已关闭的 PR，审批与合并都没有意义，直接不渲染。
   var actionsVisible = !pr || prStateUpper === "OPEN";
-  // 为什么禁用的原因要写清楚，别让用户点一个灰按钮猜。
+
+  /* 失败检查数：完全不同来源都要认（checkRun 的 conclusion、status context 的 state） */
+  var failingChecks = checks.filter(function (c: any) {
+    var conclusion = String((c && c.conclusion) || "").toUpperCase();
+    var ctxState = String((c && c.state) || "").toUpperCase();
+    if (ctxState) return ctxState === "FAILURE" || ctxState === "ERROR";
+    return conclusion === "FAILURE" || conclusion === "TIMED_OUT" || conclusion === "CANCELLED"
+      || conclusion === "ACTION_REQUIRED" || conclusion === "STARTUP_FAILURE";
+  }).length;
+  var changesRequested = reviewUpper === "CHANGES_REQUESTED";
+  var approvedAlready = reviewUpper === "APPROVED";
+
+  // 为什么禁用的原因要写清楚，别让用户点一个灰按钮猜；顺序按「先修什么最划算」排。
   var approveBlockedReason = !pr
     ? "正在读取 PR"
-    : (pr.isDraft ? "草稿 PR 不能批准" : (mergeState === "DIRTY" ? "有冲突，先解决冲突再批准" : null));
+    : (pr.isDraft ? "草稿 PR 不能批准"
+      : (mergeState === "DIRTY" ? "有冲突，先解决冲突再批准"
+        : (approvedAlready ? "你已经批准过这个 PR" : null)));
   var mergeBlockedReason = !pr
     ? "正在读取 PR"
-    : (pr.isDraft ? "草稿 PR 不能合并" : (mergeState === "DIRTY" ? "有冲突，先解决冲突" : (mergeState === "BLOCKED" ? "分支保护未满足（检查未过或还缺批准）" : null)));
+    : (pr.isDraft ? "草稿 PR 不能合并"
+      : (mergeState === "DIRTY" ? "有冲突，先解决冲突"
+        : (failingChecks > 0 ? failingChecks + " 项检查未通过"
+          : (changesRequested ? "评审要求修改，先处理意见"
+            : (mergeState === "BLOCKED" ? "分支保护未满足（检查未过或还缺批准）" : null)))));
+
+  // 一行讲清「现在为什么合不了」，而不是让用户去猜按钮为什么不亮
+  var blockedReasons: string[] = [];
+  if (pr) {
+    if (failingChecks > 0) blockedReasons.push(failingChecks + " 项检查未通过");
+    if (changesRequested) blockedReasons.push("评审要求修改");
+    if (mergeState === "DIRTY") blockedReasons.push("有合并冲突");
+  }
+  var blockedHint = (actionsVisible && blockedReasons.length > 0)
+    ? React.createElement("span", { className: "ghsp-blocked", title: "这些条件不满足前无法合并" }, "不能合并：" + blockedReasons.join(" · "))
+    : null;
 
   var headActions = React.createElement("div", { className: "ghsp-head-actions" },
     actionsVisible ? React.createElement("button", {
@@ -1374,13 +1879,25 @@ function SessionPrPanelBody(props: any) {
         var ok = !mergeMethods || mergeMethods[m] !== false;
         return ok ? React.createElement("option", { key: m, value: m }, m) : null;
       })) : null,
+    blockedHint,
     React.createElement("button", { type: "button", className: "ghsp-icon-btn", title: "在 GitHub 打开", "aria-label": "在 GitHub 打开", onClick: function () { if (pr && pr.url) openUrl(pr.url); } },
       React.createElement("svg", { width: 12, height: 12, viewBox: "0 0 12 12", "aria-hidden": "true" },
         React.createElement("path", { d: "M5 2H2.5A1.5 1.5 0 0 0 1 3.5v6A1.5 1.5 0 0 0 2.5 11h6A1.5 1.5 0 0 0 10 9.5V7M4.5 7.5 10 2m0 0H6.5M10 2v3.5", fill: "none", stroke: "currentColor", strokeWidth: 1.2, strokeLinecap: "round", strokeLinejoin: "round" }))),
     React.createElement("button", { type: "button", className: "ghsp-icon-btn", title: "把这个 PR 放进对话框", "aria-label": "把这个 PR 放进对话框", onClick: function () { pushToComposer(composerText("pr")); } },
       React.createElement("svg", { width: 12, height: 12, viewBox: "0 0 12 12", "aria-hidden": "true" },
         React.createElement("path", { d: "M2 3h8v5H5L3 10V8H2z", fill: "none", stroke: "currentColor", strokeWidth: 1.1, strokeLinejoin: "round" }))),
-    React.createElement("button", { type: "button", className: "ghsp-icon-btn", title: "刷新", "aria-label": "刷新", onClick: function () { setReloadTick(function (n: number) { return n + 1; }); setDetailTick(function (n: number) { return n + 1; }); } },
+    React.createElement("button", {
+      type: "button",
+      className: "ghsp-icon-btn" + (detail.loading ? " spinning" : ""),
+      title: detail.loading ? "刷新中…" : "刷新（元数据 + 变更）",
+      "aria-label": "刷新",
+      disabled: Boolean(detail.loading),
+      onClick: function () {
+        setReloadTick(function (n: number) { return n + 1; });
+        setDetailTick(function (n: number) { return n + 1; });
+        setThreadTick(function (n: number) { return n + 1; });
+      },
+    },
       React.createElement("svg", { width: 12, height: 12, viewBox: "0 0 12 12", "aria-hidden": "true" },
         React.createElement("path", { d: "M10 6a4 4 0 1 1-1.2-2.8M10 1.5V4H7.5", fill: "none", stroke: "currentColor", strokeWidth: 1.3, strokeLinecap: "round", strokeLinejoin: "round" })))
   );
@@ -1425,14 +1942,36 @@ function SessionPrPanelBody(props: any) {
       prFiles.length === 0
         ? (detail.loading ? React.createElement("div", { className: "ghsp-skeleton" }, React.createElement("div", { className: "ghsp-bar w80" }), React.createElement("div", { className: "ghsp-bar w60" })) : React.createElement("div", { className: "ghsp-muted" }, "没有文件改动"))
         : prFiles.slice(0, 40).map(function (f: any) {
-            return React.createElement("div", { key: f.path, className: "ghsp-file-row" },
-              React.createElement("span", { className: "ghsp-path", title: f.path }, f.path),
-              React.createElement("span", { className: "ghsp-stat" },
-                React.createElement("span", { className: "ghsp-add" }, "+" + (f.additions || 0)), " ",
-                React.createElement("span", { className: "ghsp-del" }, "−" + (f.deletions || 0))),
-              React.createElement("button", { type: "button", className: "ghsp-icon-btn", title: "把这个文件放进对话框", onClick: function () {
-                pushToComposer("看这个改动：" + (selectedRepo || "") + "#" + selected + " 的 `" + f.path + "`（+" + (f.additions || 0) + " −" + (f.deletions || 0) + "）\n" + ((pr && pr.url) || ""));
-              } }, "＋"));
+            var open = Boolean(expandedFiles[f.path]);
+            var hasPatch = Boolean(String(f.patch || "").trim());
+            return React.createElement("div", { key: f.path },
+              React.createElement("div", { className: "ghsp-file-row" },
+                hasPatch
+                  ? React.createElement("button", {
+                      type: "button", className: "ghsp-file-toggle",
+                      title: open ? "收起这个文件的改动" : "只看这个文件的改动",
+                      onClick: function () {
+                        setExpandedFiles(function (prev: any) {
+                          var next = Object.assign({}, prev);
+                          if (next[f.path]) delete next[f.path]; else next[f.path] = true;
+                          return next;
+                        });
+                      },
+                    }, open ? "▾" : "▸")
+                  : React.createElement("span", { className: "ghsp-file-toggle ghost" }, "·"),
+                React.createElement("span", { className: "ghsp-path", title: f.path }, f.path),
+                React.createElement("span", { className: "ghsp-stat" },
+                  React.createElement("span", { className: "ghsp-add" }, "+" + (f.additions || 0)), " ",
+                  React.createElement("span", { className: "ghsp-del" }, "−" + (f.deletions || 0))),
+                React.createElement("button", { type: "button", className: "ghsp-icon-btn", title: "把这个文件放进对话框", onClick: function () {
+                  pushToComposer("看这个改动：" + (selectedRepo || "") + "#" + selected + " 的 `" + f.path + "`（+" + (f.additions || 0) + " −" + (f.deletions || 0) + "）\n" + ((pr && pr.url) || ""));
+                } }, "＋")),
+              open && hasPatch
+                ? React.createElement(DiffBlock, {
+                    text: "diff --git a/" + f.path + " b/" + f.path + "\n--- a/" + f.path + "\n+++ b/" + f.path + "\n" + String(f.patch || ""),
+                    cap: 3000,
+                  })
+                : null);
           }),
       prFiles.length > 40 ? React.createElement("div", { className: "ghsp-muted", style: { padding: "6px 0" } }, "还有 " + (prFiles.length - 40) + " 个文件，点上方「加载 diff」看全量") : null);
   } else if (diffState.loading) {
@@ -1441,6 +1980,15 @@ function SessionPrPanelBody(props: any) {
       React.createElement("div", { className: "ghsp-skel-row", style: { width: "72%" } }),
       React.createElement("div", { className: "ghsp-skel-row", style: { width: "86%" } }),
       React.createElement("div", { className: "ghsp-skel-row", style: { width: "58%" } }));
+  } else if (diffState.error) {
+    changesBody = React.createElement("div", null,
+      React.createElement("div", { className: "ghsp-error" },
+        React.createElement("span", null, diffState.error),
+        React.createElement("div", { className: "ghsp-actions" },
+          React.createElement("button", { type: "button", className: "ghsp-btn", onClick: function () { setReloadTick(function (n: number) { return n + 1; }); } }, "重试"),
+          React.createElement("button", { type: "button", className: "ghsp-btn", onClick: function () { setWantDiff(false); } }, "按文件看"))),
+      React.createElement("div", { className: "ghsp-muted", style: { marginTop: "6px" } },
+        filesState.loading ? "正在读取文件补丁…" : "整份 diff 拿不到时，回到文件列表逐个展开即可（不受 20000 行上限约束）。"));
   } else if (files.length > 0) {
     changesBody = React.createElement("div", null,
       files.map(function (file: any) {
@@ -1762,12 +2310,29 @@ function SessionPrPanelBody(props: any) {
           return React.createElement("span", { className: "ghsp-checks", title: "检查状态" },
             React.createElement("span", { className: "ghsp-dot " + rollup.tone }),
             React.createElement("span", { className: "ghsp-check-chip " + rollup.tone }, rollup.label));
-        })())
+        })(),
+        (function () {
+          // 评审结论在面板里原本完全不可见（只在「待修改意见」里体现）。补一个小徽标：
+          // 批准之后能立刻看到「已批准」，也解释了为什么合并按钮仍可能被禁用。
+          var decision = String((pr && pr.reviewDecision) || "").toUpperCase();
+          if (!decision) return null;
+          var map: any = {
+            APPROVED: ["pass", "已批准"],
+            CHANGES_REQUESTED: ["fail", "需要修改"],
+            REVIEW_REQUIRED: ["pending", "待评审"],
+          };
+          var hit = map[decision];
+          if (!hit) return null;
+          return React.createElement("span", { className: "ghsp-badge " + hit[0], title: "评审结论：" + decision }, hit[1]);
+        })(),
+        detail.at ? React.createElement("span", { className: "ghsp-detail-age", title: "元数据更新时间" }, "更新于 " + ageLabel(detail.at)) : null)
     ),
     detail.error && !pr
       ? React.createElement("div", { className: "ghsp-error" },
-          React.createElement("span", null, detail.error),
-          React.createElement("button", { type: "button", className: "ghsp-btn", onClick: function () { setReloadTick(function (n: number) { return n + 1; }); } }, "重试"))
+          React.createElement("span", null, (selectedRepo || "") + "#" + selected + "：" + detail.error),
+          React.createElement("div", { className: "ghsp-actions" },
+            React.createElement("button", { type: "button", className: "ghsp-btn", onClick: function () { setReloadTick(function (n: number) { return n + 1; }); setDetailTick(function (n: number) { return n + 1; }); } }, "重试"),
+            React.createElement("button", { type: "button", className: "ghsp-btn", onClick: function () { if (selectedRepo) openUrl("https://github.com/" + selectedRepo + "/pull/" + selected); } }, "在 GitHub 打开")))
       : React.createElement("div", { className: "ghsp-cols" },
           React.createElement("main", { className: "ghsp-col-main" }, descriptionCard, changesCard, discussionCard, requestsCard),
           React.createElement("aside", { className: "ghsp-col-side" },

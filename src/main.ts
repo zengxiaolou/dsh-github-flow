@@ -163,6 +163,15 @@ export function apply(ctx: any, config: PluginConfig = {}) {
     );
   }
 
+  // 4.5 预热 GitHub HTTP 连接：面板/浮窗的只读请求走进程内长连接，
+  // 第一次请求要付 TLS 握手（约 +0.7s）。开机时先打一发 /rate_limit 把连接建好，
+  // 用户真正打开面板时就能直接复用。失败无所谓（离线/未登录），静默忽略。
+  void import('./github-http.js')
+    .then((mod) => mod.githubGet('/rate_limit'))
+    .catch(() => {
+      /* 预热失败不影响任何功能 */
+    });
+
   // 5. 启动后低优先级后台闲时静默探测：若有新版本，仅输出一次友好的控制台提示
   if (config.checkUpdate !== false) {
     // 包裹在 ctx.effect 中（Cordis 规范）：热重载/卸载发生在 3 秒延迟窗口内时，

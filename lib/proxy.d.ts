@@ -46,9 +46,22 @@ export declare class ProxyManager {
     private lastProbe;
     private fetchProxyAvailable;
     private activeDispatcherUrl;
+    /** 代理端口是否真的有人监听：null=还没探测过 */
+    private reachable;
+    private reachableAt;
+    private reachableTimer;
     /** 安装代理 dispatcher 前的进程默认 dispatcher 快照（关闭代理时恢复，防残留） */
     private defaultDispatcher;
     constructor(presetUrl?: string);
+    /**
+     * 后台探测代理端口是否可连，并每 60 秒复查。
+     *
+     * 为什么必须有：代理是「本机某个工具在监听」的假设。Clash 没开、端口改了、公司网下
+     * 代理不可用时，如果仍然把 HTTPS_PROXY 注入给 gh，**所有 gh 调用会直接 ECONNREFUSED**——
+     * 从「慢」变成「全挂」。这里探不到就退回直连，宁可慢也别报错。
+     */
+    private scheduleReachability;
+    private probeReachable;
     /** 读取持久化文件；不存在时回落 cordis.patch.yml 预置值；再无则保持默认直连 */
     private load;
     /**
@@ -82,6 +95,8 @@ export declare class ProxyManager {
         state: ProxyStateSnapshot;
     };
     /** 经当前代理配置探测 GitHub API 连通性（2.5s 超时）。失败不回滚保存——离线预配置是合法场景 */
+    /** 配置变更后立刻重探端口，不用等下一个 60 秒周期 */
+    refreshReachability(): void;
     probe(): Promise<ProxyProbeResult>;
     snapshot(): ProxyStateSnapshot;
 }
